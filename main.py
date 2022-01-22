@@ -15,9 +15,7 @@ def getRoverInfo():
 	for element in jsonData['rovers']:
 		name = element['name']
 		maxSol = element['max_sol']
-		totalPhotos = element['total_photos']
-		print(f'name: {name}\ntotal pics: {totalPhotos}')
-		
+		totalPhotos = element['total_photos']		
 		cameras = []
 
 		for camera in element['cameras']:
