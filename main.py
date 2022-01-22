@@ -70,7 +70,7 @@ def getRoverPics(savePath, roverInfo):
 			#if there are no subfolders in this sol's dir, we can delete that sol's dir
 			folderCount = sum([len(folder) for r, d, folder in os.walk(f'{savePath}{rover.name}/{currentSol}')])
 			
-			if folderCount < 1:
+			if folderCount == 0:
 				print(f'Deleting empty sol folder: {savePath}{rover.name}/{currentSol}\n')
 				os.system(f'rmdir {savePath}{rover.name}/{currentSol}')
 			
