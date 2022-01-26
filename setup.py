@@ -36,7 +36,7 @@ def setup():
 
 	for rover in roverInfo:
 		print(f'{rover.name}' + '.' * (maxLineLength-len(rover.name)-1) + f'{rover.ID}')
-	print('All' + '.' * (maxLineLength-len('All')-1) + f'{roverInfo[-1].ID + 1}')
+	print('All' + '.' * (maxLineLength-len('All')-1) + f'{len(roverInfo)}')
 	
 
 	showInputPrompt = True
@@ -91,7 +91,7 @@ def setup():
 			if(os.path.isdir(f'{savePath}{rover.name}')):
 
 				print(f'Deleting path {savePath}{rover.name}\n')
-				os.system(f'rm -r {savePath}{rover.name}')
+				#os.system(f'rm -r {savePath}{rover.name}')
 
 	else:
 		exit(0)

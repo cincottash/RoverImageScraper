@@ -9,7 +9,7 @@ def getRoverPics(savePath, roverInfo):
 		print(f'Creating path {savePath}{rover.name}\n')
 		os.system(f'mkdir {savePath}{rover.name}')
 
-		currentSol = 0
+		currentSol = 3597
 
 		while(currentSol <= rover.maxSol):
 			#create the dir
