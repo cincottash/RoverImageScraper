@@ -56,7 +56,7 @@ def setup():
 		if validResponse:
 			userResponse.sort()
 
-			for char in userResponse:\
+			for char in userResponse:
 				#plus two because we have one extra rover ID (all) and range is exclusive
 				if int(char) not in range(0, rover.ID+2):
 					print('Invalid input, should be a single number e.g 1234\n')
