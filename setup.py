@@ -15,7 +15,7 @@ def setup():
 	jsonData = response.json()
 
 	roverInfo = []
-	#ID = 0
+	ID = 0
 	for element in jsonData['rovers']:
 		#print(ID)
 		name = element['name']
@@ -26,11 +26,7 @@ def setup():
 		for camera in element['cameras']:
 			cameras.append(camera['name'])
 
-		roverInfo.append(Rover(name, maxSol, totalPhotos, cameras, 0))
-
-	ID = 0
-	for rover in roverInfo:
-		rover.ID = ID
+		roverInfo.append(Rover(name, maxSol, totalPhotos, cameras, ID))
 		ID += 1
 
 	print(f'Found {len(roverInfo)} rovers\n')

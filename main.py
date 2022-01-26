@@ -1,11 +1,6 @@
 import os
 import requests
-#import sys
-
 from setup import *
-
-
-
 
 def getRoverPics(savePath, roverInfo):
 
