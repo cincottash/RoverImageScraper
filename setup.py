@@ -49,7 +49,7 @@ def setup():
 		try:
 			userResponse = [int(_) for _ in userResponse]
 		except ValueError:
-			print('Invalid input, should be a single number e.g 1234\n')
+			print('Invalid input type, should be a single integer e.g 1234\n')
 			validResponse = False
 			
 
