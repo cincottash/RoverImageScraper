@@ -36,7 +36,7 @@ def setup():
 
 	for rover in roverInfo:
 		print(f'{rover.name}' + '.' * (maxLineLength-len(rover.name)-1) + f'{rover.ID}')
-	print('All' + '.' * (maxLineLength-len('All')-1) + f'{rover.ID+1}')
+	print('All' + '.' * (maxLineLength-len('All')-1) + f'{roverInfo[-1].ID + 1}')
 	
 
 	showInputPrompt = True
