@@ -28,7 +28,6 @@ def getRoverPics(savePath, roverInfo):
 				
 				if len(solJsonData['photos']) > 0:
 				
-					#create the dir
 					print(f'Creating path {savePath}{rover.name}/{currentSol}\n')
 					os.system(f'mkdir {savePath}{rover.name}/{currentSol}')
 
