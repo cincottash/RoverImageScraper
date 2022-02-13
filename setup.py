@@ -1,9 +1,15 @@
 import sys
 import requests
 from rover import *
+import os
 
 def setup():
-	savePath = sys.argv[1]
+
+	if not os.path.isdir(sys.argv[1]):
+		print(f'Error, directory {sys.argv[1]} does not exist\n')
+		exit(0)
+	else:
+		savePath = sys.argv[1]
 
 	response = requests.get('https://mars-photos.herokuapp.com/api/v1/rovers')
 
