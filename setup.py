@@ -1,14 +1,10 @@
 import sys
-import os
 import requests
 from rover import *
+#import os
 
 def setup():
-	savePath = list(sys.argv[1])
-
-	if savePath[-1] != '/':
-		savePath.append('/')
-	savePath = ''.join(savePath)
+	savePath = sys.argv[1]
 
 	response = requests.get('https://mars-photos.herokuapp.com/api/v1/rovers')
 
