@@ -1,7 +1,6 @@
 import sys
 import requests
 from rover import *
-#import os
 
 def setup():
 	savePath = sys.argv[1]
