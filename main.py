@@ -38,14 +38,13 @@ def getRoverPics(savePath, roverInfo):
 						cameraResponse = requests.get(f'https://mars-photos.herokuapp.com/api/v1/rovers/{rover.name}/photos?sol={currentSol}&camera={camera}')
 						cameraJsonData = cameraResponse.json()
 
-						#download all the pics taken from that camera on this sol and save it
-						photoNumber = 0
+						#only download pics if there were photos taken with it that day
 						if len(cameraJsonData['photos']) > 0:
 							cameraPath = os.path.join(savePath, rover.name, str(currentSol), camera)
 							print(f'Creating path {cameraPath}\n')
 							sp.run(['mkdir', cameraPath])
 
-							for photo in cameraJsonData['photos']:
+							for photoNumber, photo in enumerate(cameraJsonData['photos']):
 
 								url = photo['img_src']
 
@@ -56,7 +55,6 @@ def getRoverPics(savePath, roverInfo):
 								
 								sp.run(['curl', '-L', '-o', photoNumberPath, url])
 								
-								photoNumber += 1
 						else:
 							print(f'No pictures taken with camera {camera} on sol {currentSol}\nSkipping camera {camera}\n')
 				else:
