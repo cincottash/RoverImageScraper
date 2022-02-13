@@ -37,36 +37,36 @@ def setup():
 	showInputPrompt = True
 
 	while showInputPrompt:
-		validroverResponse = True
-		userroverResponse = list(input('\nPlease select which rovers to scrape\n'))
+		validResponse = True
+		userResponse = list(input('\nPlease select which rovers to scrape\n'))
 		
 		#make sure they are all ints
 		try:
-			userroverResponse = [int(_) for _ in userroverResponse]
+			userResponse = [int(_) for _ in userResponse]
 		except ValueError:
 			print('Invalid input type, should be a single integer e.g 1234')
-			validroverResponse = False
+			validResponse = False
 		
 		#we cannot select more rovers than the total amount of rovers
-		if validroverResponse:
-			if len(userroverResponse) > len(roverInfo):
+		if validResponse:
+			if len(userResponse) > len(roverInfo):
 				print(f'Invalid input, cannot select more than {len(roverInfo)} rovers')
-				validroverResponse = False
+				validResponse = False
 
-		#any num in the user roverResponse must be in the range of rover ID's
-		if validroverResponse:
-			for num in userroverResponse:
+		#any num in the user response must be in the range of rover ID's
+		if validResponse:
+			for num in userResponse:
 				if num not in range(0, len(roverInfo)):
 					print(f'Invalid input, each number must be between 0 and {len(roverInfo)-1}')
-					validroverResponse = False
+					validResponse = False
 					break
 
-		if validroverResponse:
+		if validResponse:
 			showInputPrompt = False
 
 	#"remove" any unwanted rovers
 	tempRoverInfo = []
-	for num in userroverResponse:
+	for num in userResponse:
 		for rover in roverInfo:
 			if num == rover.ID:
 				tempRoverInfo.append(rover)
