@@ -15,70 +15,61 @@ def setup():
 	jsonData = response.json()
 
 	roverInfo = []
-	ID = 0
-	for rover in jsonData['rovers']:
-		#print(ID)
+	for ID, rover in enumerate(jsonData['rovers']):
 		name = rover['name']
 		maxSol = rover['max_sol']
 		totalPhotos = rover['total_photos']		
 		cameras = []
 
-		#index == sol and value at index == num pics on that sol
-		photosPerSol = []
-
 		for camera in rover['cameras']:
 			cameras.append(camera['name'])
 
 		roverInfo.append(Rover(name, maxSol, totalPhotos, cameras, ID))
-		ID += 1
 
 	print(f'Found {len(roverInfo)} rovers\n')
 
 	maxLineLength = 26
 
 	for rover in roverInfo:
-		print(f'{rover.name}' + '.' * (maxLineLength-len(rover.name)-1) + f'{rover.ID}')
-	print('All' + '.' * (maxLineLength-len('All')-1) + f'{len(roverInfo)}')
-	
+		print(f'{rover.name}' + '.' * (maxLineLength-len(rover.name)-1) + f'{rover.ID}')	
 
 	showInputPrompt = True
 
 	while showInputPrompt:
 		validResponse = True
-		userResponse = list(input('Please select which rovers to scrape\n'))
+		userResponse = list(input('\nPlease select which rovers to scrape\n'))
 		
 		#make sure they are all ints
 		try:
 			userResponse = [int(_) for _ in userResponse]
 		except ValueError:
-			print('Invalid input type, should be a single integer e.g 1234\n')
+			print('Invalid input type, should be a single integer e.g 1234')
 			validResponse = False
-			
-
+		
+		#we cannot select more rovers than the total amount of rovers
 		if validResponse:
-			userResponse.sort()
+			if len(userResponse) > len(roverInfo):
+				print(f'Invalid input, cannot select more than {len(roverInfo)} rovers')
+				validResponse = False
 
-			for char in userResponse:
-				#plus two because we have one extra rover ID (all) and range is exclusive
-				if int(char) not in range(0, rover.ID+2):
-					print('Invalid input, should be a single number e.g 1234\n')
+		#any num in the user response must be in the range of rover ID's
+		if validResponse:
+			for num in userResponse:
+				if num not in range(0, len(roverInfo)):
+					print(f'Invalid input, each number must be between 0 and {len(roverInfo)-1}')
 					validResponse = False
 					break
-
-		#we also shouldn't be allowed to pick the last option (All) and any other individual rovers
-		if validResponse and int(userResponse[-1]) == rover.ID+1 and len(userResponse) > 1:
-			print(f'Invalid input, if choosing All rovers, no other rovers must be specified\n')
-			validResponse = False
 
 		if validResponse:
 			showInputPrompt = False
 
+	#"remove" any unwanted rovers
 	tempRoverInfo = []
-	if userResponse[-1] != len(roverInfo):
+	for num in userResponse:
 		for rover in roverInfo:
-			if rover.ID in userResponse:
+			if num == rover.ID:
 				tempRoverInfo.append(rover)
-
-		roverInfo = tempRoverInfo
+				break
+	roverInfo = tempRoverInfo
 
 	return savePath, roverInfo
