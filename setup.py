@@ -16,14 +16,17 @@ def setup():
 
 	roverInfo = []
 	ID = 0
-	for element in jsonData['rovers']:
+	for rover in jsonData['rovers']:
 		#print(ID)
-		name = element['name']
-		maxSol = element['max_sol']
-		totalPhotos = element['total_photos']		
+		name = rover['name']
+		maxSol = rover['max_sol']
+		totalPhotos = rover['total_photos']		
 		cameras = []
 
-		for camera in element['cameras']:
+		#index == sol and value at index == num pics on that sol
+		photosPerSol = []
+
+		for camera in rover['cameras']:
 			cameras.append(camera['name'])
 
 		roverInfo.append(Rover(name, maxSol, totalPhotos, cameras, ID))
@@ -32,7 +35,6 @@ def setup():
 	print(f'Found {len(roverInfo)} rovers\n')
 
 	maxLineLength = 26
-
 
 	for rover in roverInfo:
 		print(f'{rover.name}' + '.' * (maxLineLength-len(rover.name)-1) + f'{rover.ID}')
@@ -75,25 +77,24 @@ def setup():
 	tempRoverInfo = []
 	if userResponse[-1] != len(roverInfo):
 		for rover in roverInfo:
-			
 			if rover.ID in userResponse:
 				tempRoverInfo.append(rover)
 
 		roverInfo = tempRoverInfo
 
-	print(f'WARNING, EVERYTHING IN THE FOLLOWING DIRECTORIES WILL BE DELETED\n')
-	for rover in roverInfo:
-		if(os.path.isdir(f'{savePath}{rover.name}')):
-			print(f'{savePath}{rover.name}\n')
+	# print(f'WARNING, EVERYTHING IN THE FOLLOWING DIRECTORIES WILL BE DELETED\n')
+	# for rover in roverInfo:
+	# 	if(os.path.isdir(f'{savePath}{rover.name}')):
+	# 		print(f'{savePath}{rover.name}\n')
 
-	if(input(f'CONTINUE? (YES/NO)\n').upper() == 'YES'):
-		for rover in roverInfo:
-			if(os.path.isdir(f'{savePath}{rover.name}')):
+	# if(input(f'CONTINUE? (YES/NO)\n').upper() == 'YES'):
+	# 	for rover in roverInfo:
+	# 		if(os.path.isdir(f'{savePath}{rover.name}')):
 
-				print(f'Deleting path {savePath}{rover.name}\n')
-				#os.system(f'rm -r {savePath}{rover.name}')
+	# 			print(f'Deleting path {savePath}{rover.name}\n')
+	# 			#os.system(f'rm -r {savePath}{rover.name}')
 
-	else:
-		exit(0)
+	# else:
+	# 	exit(0)
 
 	return savePath, roverInfo
