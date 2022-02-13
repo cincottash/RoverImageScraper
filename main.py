@@ -7,7 +7,7 @@ def getRoverPics(savePath, roverInfo):
 	for rover in roverInfo:
 		print(f'Starting rover {rover.name}\n')
 		
-		#check if a folder already exists for this rover, if not, create it
+		#check if dir exists for this rover, if not, create it
 		roverNamePath = os.path.join(savePath, rover.name)
 		if not os.path.isdir(roverNamePath):
 			print(f'Creating path {roverNamePath}\n')
@@ -20,27 +20,28 @@ def getRoverPics(savePath, roverInfo):
 		while(currentSol <= rover.maxSol):
 			print(f'Starting sol {currentSol} from rover {rover.name}\n')
 			
-			#check if dir already exists for this sol
+			#check if dir exists for this sol, if not, create it
 			solPath = os.path.join(savePath, rover.name, str(currentSol))
 			if not os.path.isdir(solPath):
 				
-				#if it doesn't exist, also check if there were any pics taken on this day
 				solResponse = requests.get(f'https://mars-photos.herokuapp.com/api/v1/rovers/{rover.name}/photos?sol={currentSol}')
 				solJsonData = solResponse.json()
 				
+				#only create sol dir if pics were taken that sol
 				if len(solJsonData['photos']) > 0:
 				
 					print(f'Creating path {solPath}\n')
 					sp.run(['mkdir', solPath])
 
-					#download each image from each camera on each day
+					#download each image from each camera on each sol
 					for camera in rover.cameras:
 						cameraResponse = requests.get(f'https://mars-photos.herokuapp.com/api/v1/rovers/{rover.name}/photos?sol={currentSol}&camera={camera}')
 						cameraJsonData = cameraResponse.json()
 
-						#only download pics if there were photos taken with it that day
+						#only create camera dir if there were photos taken with it that sol
 						if len(cameraJsonData['photos']) > 0:
 							cameraPath = os.path.join(savePath, rover.name, str(currentSol), camera)
+							
 							print(f'Creating path {cameraPath}\n')
 							sp.run(['mkdir', cameraPath])
 
@@ -48,6 +49,7 @@ def getRoverPics(savePath, roverInfo):
 
 								url = photo['img_src']
 
+								#this is the final path we will save our image to
 								photoNumberPath = os.path.join(savePath, rover.name, str(currentSol), camera, str(photoNumber))
 								
 								cmd = f'curl -L -o {photoNumberPath} {url}'
@@ -66,7 +68,7 @@ def getRoverPics(savePath, roverInfo):
 			currentSol += 1
 
 
-	
+
 def main():
 
 	savePath, roverInfo = setup()
