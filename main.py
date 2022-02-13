@@ -1,5 +1,5 @@
 import os
-import requests
+import subprocess as sp
 from setup import *
 
 def getRoverPics(savePath, roverInfo):
@@ -8,11 +8,12 @@ def getRoverPics(savePath, roverInfo):
 		print(f'Starting rover {rover.name}\n')
 		
 		#check if a folder already exists for this rover, if not, create it
-		if not os.path.isdir(f'{savePath}{rover.name}'):
-			print(f'Creating path {savePath}{rover.name}\n')
-			os.system(f'mkdir {savePath}{rover.name}')
+		roverNamePath = os.path.join(savePath, rover.name)
+		if not os.path.isdir(roverNamePath):
+			print(f'Creating path {roverNamePath}\n')
+			sp.run(['mkdir', roverNamePath])
 		else:
-			print(f'Found existing directory for rover {rover.name} : {savePath}{rover.name}\n')
+			print(f'Found existing directory for rover {rover.name} : {roverNamePath}\n')
 
 		currentSol = 0
 
@@ -20,7 +21,8 @@ def getRoverPics(savePath, roverInfo):
 			print(f'Starting sol {currentSol} from rover {rover.name}\n')
 			
 			#check if dir already exists for this sol
-			if not os.path.isdir(f'{savePath}{rover.name}/{currentSol}'):
+			solPath = os.path.join(savePath, rover.name, str(currentSol))
+			if not os.path.isdir(solPath):
 				
 				#if it doesn't exist, also check if there were any pics taken on this day
 				solResponse = requests.get(f'https://mars-photos.herokuapp.com/api/v1/rovers/{rover.name}/photos?sol={currentSol}')
@@ -28,35 +30,40 @@ def getRoverPics(savePath, roverInfo):
 				
 				if len(solJsonData['photos']) > 0:
 				
-					print(f'Creating path {savePath}{rover.name}/{currentSol}\n')
-					os.system(f'mkdir {savePath}{rover.name}/{currentSol}')
+					print(f'Creating path {solPath}\n')
+					sp.run(['mkdir', solPath])
 
 					#download each image from each camera on each day
 					for camera in rover.cameras:
 						cameraResponse = requests.get(f'https://mars-photos.herokuapp.com/api/v1/rovers/{rover.name}/photos?sol={currentSol}&camera={camera}')
 						cameraJsonData = cameraResponse.json()
 
-						print(f'Creating path {savePath}{rover.name}/{currentSol}/{camera}\n')
-						os.system(f'mkdir {savePath}{rover.name}/{currentSol}/{camera}')
-
 						#download all the pics taken from that camera on this sol and save it
-						cameraPhotoCount = 0
+						photoNumber = 0
 						if len(cameraJsonData['photos']) > 0:
+							cameraPath = os.path.join(savePath, rover.name, str(currentSol), camera)
+							print(f'Creating path {cameraPath}\n')
+							sp.run(['mkdir', cameraPath])
+
 							for photo in cameraJsonData['photos']:
+
 								url = photo['img_src']
 
-								cmd = f'curl -L -o {savePath}{rover.name}/{currentSol}/{camera}/{cameraPhotoCount} {url}'
-								print(f'{cmd}\n')
-								os.system(cmd)
+								photoNumberPath = os.path.join(savePath, rover.name, str(currentSol), camera, str(photoNumber))
 								
-								cameraPhotoCount += 1
+								cmd = f'curl -L -o {photoNumberPath} {url}'
+								print(f'{cmd}\n')
+								
+								sp.run(['curl', '-L', '-o', photoNumberPath, url])
+								
+								photoNumber += 1
 						else:
 							print(f'No pictures taken with camera {camera} on sol {currentSol}\nSkipping camera {camera}\n')
 				else:
 					print(f'No pictures taken on sol {currentSol}\nSkipping sol {currentSol}\n')
 
 			else:
-				print(f'Found existing directory for sol {currentSol} : {savePath}{rover.name}/{currentSol}\nSkipping sol {currentSol}\n')
+				print(f'Found existing directory for sol {currentSol} : {solPath}\nSkipping sol {currentSol}\n')
 
 			currentSol += 1
 
