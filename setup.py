@@ -70,7 +70,6 @@ def setup():
 			print(f'Invalid input, if choosing All rovers, no other rovers must be specified\n')
 			validResponse = False
 
-
 		if validResponse:
 			showInputPrompt = False
 
@@ -81,20 +80,5 @@ def setup():
 				tempRoverInfo.append(rover)
 
 		roverInfo = tempRoverInfo
-
-	# print(f'WARNING, EVERYTHING IN THE FOLLOWING DIRECTORIES WILL BE DELETED\n')
-	# for rover in roverInfo:
-	# 	if(os.path.isdir(f'{savePath}{rover.name}')):
-	# 		print(f'{savePath}{rover.name}\n')
-
-	# if(input(f'CONTINUE? (YES/NO)\n').upper() == 'YES'):
-	# 	for rover in roverInfo:
-	# 		if(os.path.isdir(f'{savePath}{rover.name}')):
-
-	# 			print(f'Deleting path {savePath}{rover.name}\n')
-	# 			#os.system(f'rm -r {savePath}{rover.name}')
-
-	# else:
-	# 	exit(0)
 
 	return savePath, roverInfo
