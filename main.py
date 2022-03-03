@@ -50,12 +50,12 @@ def getRoverPics(savePath, roverInfo):
 								url = photo['img_src']
 
 								#this is the final path we will save our image to
-								photoNumberPath = os.path.join(savePath, rover.name, str(currentSol), camera, str(photoNumber))
+								finalPath = os.path.join(savePath, rover.name, str(currentSol), camera, str(photoNumber))
 								
-								cmd = f'curl -L -o {photoNumberPath} {url}'
+								cmd = f'curl -L -o {finalPath} {url}'
 								print(f'{cmd}\n')
 								
-								sp.run(['curl', '-L', '-o', photoNumberPath, url])
+								sp.run(['curl', '-L', '-o', finalPath, url])
 								
 						else:
 							print(f'No pictures taken with camera {camera} on sol {currentSol}\nSkipping camera {camera}\n')

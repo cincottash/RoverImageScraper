@@ -48,10 +48,9 @@ def setup():
 			validResponse = False
 		
 		#we cannot select more rovers than the total amount of rovers
-		if validResponse:
-			if len(userResponse) > len(roverInfo):
-				print(f'Invalid input, cannot select more than {len(roverInfo)} rovers')
-				validResponse = False
+		if validResponse and len(userResponse) > len(roverInfo):
+			print(f'Invalid input, cannot select more than {len(roverInfo)} rovers')
+			validResponse = False
 
 		#any num in the user response must be in the range of rover ID's
 		if validResponse:
