@@ -60,6 +60,18 @@ def setup():
 					validResponse = False
 					break
 
+		#can't have duplicate rovers
+		#to check for this i keep a list of unique nums and see if its the same length as the original list
+		#if they are the same length, there are no duplicates
+		uniqueNums = []
+		for num in userResponse:
+			if num not in uniqueNums:
+				uniqueNums.append(num)
+		if len(uniqueNums) != len(userResponse):
+			print(f'Invalid input, cannot have duplicate rovers\n')
+			validResponse = False
+
+
 		if validResponse:
 			showInputPrompt = False
 
