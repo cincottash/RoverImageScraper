@@ -67,8 +67,6 @@ def getRoverPics(savePath, roverInfo):
 
 			currentSol += 1
 
-
-
 def main():
 
 	savePath, roverInfo = setup()
