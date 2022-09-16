@@ -67,10 +67,6 @@ def getRoverPics(savePath, roverInfo):
 
 			currentSol += 1
 
-#How many pictures do we already have downloaded?
-def getDownloadedPictureCount(savePath):
-	pass
-
 def main():
 
 	savePath, roverInfo = setup()

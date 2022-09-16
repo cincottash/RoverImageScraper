@@ -3,6 +3,10 @@ import requests
 from rover import *
 import os
 
+#How many pictures do we already have downloaded?
+def getDownloadedPictureCount(savePath):
+	pass
+
 def setup():
 
 	if not os.path.isdir(sys.argv[1]):
@@ -10,6 +14,8 @@ def setup():
 		exit(0)
 	else:
 		savePath = sys.argv[1]
+		#TODO: check existing file count
+		getDownloadedPictureCount(savePath)
 
 	roverResponse = requests.get('https://mars-photos.herokuapp.com/api/v1/rovers')
 
