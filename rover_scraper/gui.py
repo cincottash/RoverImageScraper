@@ -18,7 +18,7 @@ import time
 import traceback
 
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QIntValidator, QPalette
+from PySide6.QtGui import QActionGroup, QColor, QDesktopServices, QFont, QIntValidator, QKeySequence, QPalette
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QGridLayout,
                                QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
                                QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSpinBox, QToolButton,
@@ -54,6 +54,34 @@ def fmt_size(num_bytes) -> str:
         return "N/A"
     gb = num_bytes / 1024 ** 3
     return f"{gb:,.1f} GB" if gb >= 1 else f"{num_bytes / 1024 ** 2:,.0f} MB"
+
+
+DATA_UNITS = ("auto", "KB", "MB", "GB", "TB")
+SPEED_UNITS = ("auto", "KB/s", "MB/s", "Mbit/s")
+SPEED_WINDOWS = (5, 10, 30, 60)
+_POWERS = {"B": 0, "KB": 1, "MB": 2, "GB": 3, "TB": 4}
+
+
+def fmt_bytes(num_bytes: float, unit: str = "auto") -> str:
+    """Size in the chosen unit (1 KB = 1024 bytes, as Windows Explorer shows sizes)."""
+    if unit == "auto":
+        unit = "B"
+        for name in ("KB", "MB", "GB", "TB"):
+            if num_bytes >= 1024 ** _POWERS[name]:
+                unit = name
+    value = num_bytes / 1024 ** _POWERS[unit]
+    if unit == "B":
+        return f"{value:,.0f} B"
+    return f"{value:,.2f} {unit}" if value < 100 else f"{value:,.1f} {unit}"
+
+
+def fmt_rate(bytes_per_s: float, unit: str = "auto") -> str:
+    """Speed in the chosen unit. Mbit/s uses network convention (1 Mbit = 1,000,000 bits)."""
+    if unit == "Mbit/s":
+        return f"{bytes_per_s * 8 / 1_000_000:,.1f} Mbit/s"
+    if unit == "auto":
+        return fmt_bytes(bytes_per_s, "auto") + "/s"
+    return fmt_bytes(bytes_per_s, unit[:-2]) + "/s"
 
 
 def fmt_duration(seconds: float) -> str:
@@ -123,6 +151,14 @@ def apply_theme(app: QApplication, t: dict) -> None:
     app.setStyleSheet(f"""
         QWidget {{ font-family: "Segoe UI"; font-size: 10pt; }}
         QMainWindow, QWidget#root {{ background: {t['bg']}; }}
+        QMenuBar {{ background: {t['card']}; padding: 2px 8px; }}
+        QMenuBar::item {{ padding: 5px 10px; border-radius: 4px; background: transparent; }}
+        QMenuBar::item:selected {{ background: {t['track']}; }}
+        QMenu {{ background: {t['card']}; border: 1px solid {t['border']}; padding: 4px; }}
+        QMenu::item {{ padding: 6px 28px 6px 26px; border-radius: 4px; color: {t['text']}; }}
+        QMenu::item:selected {{ background: {t['accent']}; color: {t['accent_text']}; }}
+        QMenu::item:disabled {{ color: {t['muted']}; }}
+        QMenu::separator {{ height: 1px; background: {t['border']}; margin: 4px 8px; }}
         QFrame#header, QFrame#bottomBar {{ background: {t['card']}; border: none; }}
         QFrame#header {{ border-bottom: 1px solid {t['border']}; }}
         QFrame#bottomBar {{ border-top: 1px solid {t['border']}; }}
@@ -288,13 +324,16 @@ class MainWindow(QMainWindow):
         self.rover_info: dict[str, dict] = {}    # name -> {"max_sol": int, "cameras": [...]}
         self.progress_state: dict = {}
         self.rover_started = 0.0
-        self.speed_samples: collections.deque = collections.deque(maxlen=200)
+        self.run_started = 0.0
+        self.run_ended = 0.0
+        self.speed_samples: collections.deque = collections.deque(maxlen=1000)
         self.api_error = ""
         self.last_summary = ""
 
         self.setWindowTitle("Rover Image Scraper")
         self.resize(1180, 900)
         self._build()
+        self._build_menus()
         self._load_settings_into_widgets()
         self._refresh_library()
         self._validate()
@@ -563,12 +602,24 @@ class MainWindow(QMainWindow):
         grid.setHorizontalSpacing(18)
         grid.setVerticalSpacing(4)
         self.counters: dict[str, QLabel] = {}
-        items = [("Downloaded", 0, 0), ("Already had", 0, 2), ("NASA refused", 1, 0), ("Errors", 1, 2),
-                 ("Speed", 2, 0), ("Time left", 2, 2)]
+        self.counter_heads: dict[str, QLabel] = {}
+        items = [("Photos downloaded", 0, 0), ("Already had", 0, 2),
+                 ("Data downloaded", 1, 0), ("Speed", 1, 2),
+                 ("Photo rate", 2, 0), ("Average speed", 2, 2),
+                 ("NASA refused", 3, 0), ("Errors", 3, 2),
+                 ("Time left", 4, 0), ("Elapsed", 4, 2)]
+        tips = {"Data downloaded": "Size of the photos saved to the folder in this run.",
+                "Speed": "Download speed, averaged over a recent window (View > Speed averaged over).",
+                "Average speed": "Average download speed since the run started, including waits.",
+                "Photo rate": "Photos saved per second over the same window as Speed."}
         for name, r, c in items:
-            grid.addWidget(label(name, "rowHead"), r, c)
+            head = label(name, "rowHead")
+            head.setToolTip(tips.get(name, ""))
+            self.counter_heads[name] = head
+            grid.addWidget(head, r, c)
             v = label("–", "value")
             v.setAlignment(Qt.AlignmentFlag.AlignRight)
+            v.setToolTip(tips.get(name, ""))
             self.counters[name] = v
             grid.addWidget(v, r, c + 1)
         grid.setColumnStretch(1, 1)
@@ -646,6 +697,7 @@ class MainWindow(QMainWindow):
         self.sol_to.setText(s.sol_to)
         self.workers.setValue(s.workers)
         self._update_camera_toggles()
+        self._set_log_visible(s.show_log)
 
     def _collect_settings(self) -> None:
         s = self.settings
@@ -702,6 +754,8 @@ class MainWindow(QMainWindow):
         self.open_btn.setEnabled(folder_ok)
         for w in self.locked:
             w.setEnabled(idle)
+        if hasattr(self, "act_choose"):
+            self.act_choose.setEnabled(idle)
 
     def _set_mode(self, mode: str) -> None:
         self.mode = mode
@@ -799,8 +853,94 @@ class MainWindow(QMainWindow):
         self.adv_toggle.setText("Advanced ▾" if self.adv.isVisible() else "Advanced ▸")
 
     def _toggle_log(self) -> None:
-        self.log_view.setVisible(not self.log_view.isVisible())
-        self.log_toggle.setText("Hide ▾" if self.log_view.isVisible() else "Show ▸")
+        self._set_log_visible(not self.log_view.isVisible())
+
+    def _set_log_visible(self, visible: bool) -> None:
+        self.log_view.setVisible(visible)
+        self.log_toggle.setText("Hide ▾" if visible else "Show ▸")
+        if hasattr(self, "act_log") and self.act_log.isChecked() != visible:
+            self.act_log.setChecked(visible)
+        self.settings.show_log = visible
+
+    # ---- menus -------------------------------------------------------------------------------------------
+
+    def _build_menus(self) -> None:
+        mb = self.menuBar()
+
+        file_m = mb.addMenu("&File")
+        self.act_choose = file_m.addAction("Choose photo folder…")
+        self.act_choose.setShortcut(QKeySequence("Ctrl+O"))
+        self.act_choose.triggered.connect(self._browse)
+        open_act = file_m.addAction("Open photo folder")
+        open_act.triggered.connect(self._open_folder)
+        file_m.addSeparator()
+        quit_act = file_m.addAction("Quit")
+        quit_act.setShortcut(QKeySequence("Ctrl+Q"))
+        quit_act.triggered.connect(self.close)
+
+        view_m = mb.addMenu("&View")
+        self._choice_menu(view_m, "Data units", [("Auto", "auto"), ("KB", "KB"), ("MB", "MB"), ("GB", "GB"),
+                                                 ("TB", "TB")], "data_unit")
+        self._choice_menu(view_m, "Speed units", [("Auto", "auto"), ("KB/s", "KB/s"), ("MB/s", "MB/s"),
+                                                  ("Mbit/s", "Mbit/s")], "speed_unit")
+        self._choice_menu(view_m, "Speed averaged over", [(f"{n} seconds", n) for n in SPEED_WINDOWS],
+                          "speed_window")
+        view_m.addSeparator()
+        self._choice_menu(view_m, "Theme", [("Match Windows", "system"), ("Light", "light"), ("Dark", "dark")],
+                          "theme", after=self._apply_theme)
+        self.act_log = view_m.addAction("Show activity log")
+        self.act_log.setCheckable(True)
+        self.act_log.setChecked(self.settings.show_log)
+        self.act_log.toggled.connect(self._set_log_visible)
+
+        settings_m = mb.addMenu("&Settings")
+        settings_m.setToolTipsVisible(True)
+        self.act_retry = settings_m.addAction("Retry photos NASA refused (next run)")
+        self.act_retry.setCheckable(True)
+        self.act_retry.setToolTip("Photos NASA refused (HTTP 403/404) are normally skipped on later runs. "
+                                  "Tick this to try them all again on the next run.")
+        folder_act = settings_m.addAction("Open settings folder")
+        folder_act.triggered.connect(self._open_settings_folder)
+
+        help_m = mb.addMenu("&Help")
+        site = help_m.addAction("Mars Vista website")
+        site.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://marsvista.dev")))
+        about = help_m.addAction("About Rover Image Scraper")
+        about.triggered.connect(self._about)
+
+    def _choice_menu(self, parent, title: str, options: list, attr: str, after=None) -> None:
+        """A submenu of mutually exclusive choices stored in self.settings.<attr>."""
+        menu = parent.addMenu(title)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+        for text, value in options:
+            act = menu.addAction(text)
+            act.setCheckable(True)
+            act.setChecked(getattr(self.settings, attr) == value)
+            group.addAction(act)
+            act.triggered.connect(lambda _=False, v=value: self._set_view_option(attr, v, after))
+
+    def _set_view_option(self, attr: str, value, after=None) -> None:
+        setattr(self.settings, attr, value)
+        self._save_settings()
+        self._update_counters()
+        if after:
+            after()
+
+    def _apply_theme(self) -> None:
+        choice = self.settings.theme
+        dark = system_is_dark(self.app) if choice == "system" else choice == "dark"
+        apply_theme(self.app, DARK if dark else LIGHT)
+
+    def _open_settings_folder(self) -> None:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(STATE_DIR))
+
+    def _about(self) -> None:
+        QMessageBox.about(self, "About Rover Image Scraper",
+                          "<b>Rover Image Scraper</b><br><br>Downloads raw photos from NASA's Curiosity and "
+                          "Perseverance rovers using the Mars Vista API, adding only what's missing.<br><br>"
+                          'Photos: NASA/JPL-Caltech. Data: <a href="https://marsvista.dev">Mars Vista</a>.')
 
     def _stop(self) -> None:
         self.cancel.set()
@@ -849,11 +989,16 @@ class MainWindow(QMainWindow):
         dest, rovers, cameras = self._folder(), self._selected_rovers(), self._camera_filter()
         new_only, workers = not self.check_existing.isChecked(), self.workers.value()
         key, bounds = self._key(), self._sol_bounds()
+        retry_refused = self.act_retry.isChecked()
+        if retry_refused:
+            self.act_retry.setChecked(False)      # one run only
+            self._log("Retrying photos NASA refused before (Settings > Retry photos NASA refused).")
         self.report = Report()
         report = self.report
         self.summary.setVisible(False)
         self.problems_btn.setVisible(False)
         self.speed_samples.clear()
+        self.run_started, self.run_ended = time.time(), 0.0
         self._log(f"=== Download started {time.strftime('%H:%M')}: {', '.join(rovers)}"
                   + (" (new sols only)" if new_only else " (checking existing sols for gaps)"))
 
@@ -862,7 +1007,7 @@ class MainWindow(QMainWindow):
             if not self.rover_info:
                 self.rover_info = {r.name: {"max_sol": r.max_sol, "cameras": list(r.cameras)}
                                    for r in client.rovers()}
-            unavailable = Unavailable(UNAVAILABLE_PATH)
+            unavailable = Unavailable(UNAVAILABLE_PATH, ignore_existing=retry_refused)
             scraper = Scraper(client, dest, log=lambda m: self._post("log", m), cancel=self.cancel,
                               unavailable=unavailable, workers=workers, cameras=cameras,
                               progress=lambda e: self._post("progress", e))
@@ -1040,6 +1185,7 @@ class MainWindow(QMainWindow):
                       f"{'stopped' if cancelled else 'finished'} {time.strftime('%H:%M')}")
         if mode == "download":
             self._update_progress()             # final counter values
+            self.run_ended = time.time()
         self.progress_state = {}
         self._set_mode("idle")
         if mode in ("download", "scan", "full"):
@@ -1052,6 +1198,8 @@ class MainWindow(QMainWindow):
             self._show_preview(value)
 
     def _on_error(self, mode: str, message: str) -> None:
+        if mode == "download":
+            self.run_ended = time.time()
         self.api_error = message
         self._log(f"ERROR: {message}")
         self.progress_state = {}
@@ -1183,7 +1331,6 @@ class MainWindow(QMainWindow):
 
     def _update_progress(self) -> None:
         ps = self.progress_state
-        r = self.report if self.mode == "download" else None
         if self.mode in ("scan", "full") and ps.get("scan_rover"):
             rover = ps.get("rover") or ps["scan_rover"]
             if ps.get("full") and ps.get("total"):
@@ -1211,30 +1358,53 @@ class MainWindow(QMainWindow):
         elif self.mode == "preview":
             self.phase.setText("Estimating…")
 
-        if r is not None:
-            now = time.time()
-            self.speed_samples.append((now, r.downloaded))
-            while self.speed_samples and now - self.speed_samples[0][0] > 30:
+        self._update_counters()
+
+    def _update_counters(self) -> None:
+        """Counters for the current download, or the last one after it ends (so unit changes still apply)."""
+        r = self.report
+        if r is None or self.mode in ("scan", "full", "preview"):
+            return
+        running = self.mode == "download"
+        now = time.time() if running else (self.run_ended or time.time())
+        s = self.settings
+        window = s.speed_window
+        self.counter_heads["Speed"].setText(f"Speed ({window} s)")
+        if running:
+            self.speed_samples.append((now, r.bytes_received, r.downloaded))
+            while len(self.speed_samples) > 2 and now - self.speed_samples[1][0] >= window:
                 self.speed_samples.popleft()
-            t0, d0 = self.speed_samples[0]
-            speed = (r.downloaded - d0) / (now - t0) if now - t0 > 2 else 0
-            self.counters["Downloaded"].setText(f"{r.downloaded:,}")
-            self.counters["Already had"].setText(f"{r.already_present:,}")
-            self.counters["NASA refused"].setText(f"{r.newly_unavailable + r.known_unavailable:,}")
-            errors = self.counters["Errors"]
-            errors.setText(f"{len(r.problems):,}")
-            tone = "err" if r.problems else ""
-            if errors.property("tone") != tone:
-                errors.setProperty("tone", tone)
-                repolish(errors)
-            self.counters["Speed"].setText(f"{speed:,.0f} photos/s")
-            frac = ps.get("index", 0) / max(1, ps.get("total", 0) or 1)
-            elapsed = now - self.rover_started if self.rover_started else 0
-            if 0.01 < frac < 1 and elapsed > 20:
-                rest = " (this rover)" if ps.get("rover_count", 1) > 1 else ""
-                self.counters["Time left"].setText(f"~{fmt_duration(elapsed * (1 - frac) / frac)}{rest}")
-            else:
-                self.counters["Time left"].setText("–")
+        if running and len(self.speed_samples) >= 2 and now - self.speed_samples[0][0] >= 1:
+            t0, b0, d0 = self.speed_samples[0]
+            span = now - t0
+            byte_rate, photo_rate = (r.bytes_received - b0) / span, (r.downloaded - d0) / span
+            self.counters["Speed"].setText(fmt_rate(byte_rate, s.speed_unit))
+            self.counters["Photo rate"].setText(f"{photo_rate:,.1f} photos/s")
+        elif not running:
+            self.counters["Speed"].setText("–")
+            self.counters["Photo rate"].setText("–")
+        elapsed = now - self.run_started if self.run_started else 0
+        self.counters["Elapsed"].setText(fmt_duration(elapsed) if elapsed else "–")
+        self.counters["Average speed"].setText(fmt_rate(r.bytes_received / elapsed, s.speed_unit)
+                                               if elapsed >= 1 else "–")
+        self.counters["Photos downloaded"].setText(f"{r.downloaded:,}")
+        self.counters["Data downloaded"].setText(fmt_bytes(r.bytes_saved, s.data_unit))
+        self.counters["Already had"].setText(f"{r.already_present:,}")
+        self.counters["NASA refused"].setText(f"{r.newly_unavailable + r.known_unavailable:,}")
+        errors = self.counters["Errors"]
+        errors.setText(f"{len(r.problems):,}")
+        tone = "err" if r.problems else ""
+        if errors.property("tone") != tone:
+            errors.setProperty("tone", tone)
+            repolish(errors)
+        ps = self.progress_state
+        frac = ps.get("index", 0) / max(1, ps.get("total", 0) or 1)
+        rover_elapsed = now - self.rover_started if self.rover_started else 0
+        if running and 0.01 < frac < 1 and rover_elapsed > 20:
+            rest = " (this rover)" if ps.get("rover_count", 1) > 1 else ""
+            self.counters["Time left"].setText(f"~{fmt_duration(rover_elapsed * (1 - frac) / frac)}{rest}")
+        else:
+            self.counters["Time left"].setText("–")
 
     # ---- library status ----------------------------------------------------------------------------------
 
@@ -1303,15 +1473,13 @@ def main() -> int:
     app.setStyle("Fusion")
     app.setFont(QFont("Segoe UI", 10))
 
-    def theme():
-        apply_theme(app, DARK if system_is_dark(app) else LIGHT)
-
-    theme()
-    try:
-        app.styleHints().colorSchemeChanged.connect(lambda *_: theme())
+    win = MainWindow(app)
+    win._apply_theme()
+    try:   # follow Windows light/dark changes while "Match Windows" is chosen
+        app.styleHints().colorSchemeChanged.connect(
+            lambda *_: win._apply_theme() if win.settings.theme == "system" else None)
     except AttributeError:
         pass
-    win = MainWindow(app)
     win.show()
     return app.exec()
 

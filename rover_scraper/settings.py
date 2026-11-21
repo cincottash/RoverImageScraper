@@ -23,6 +23,12 @@ class Settings:
     sol_to: str = ""
     workers: int = 6
     confirmed_folders: list[str] = field(default_factory=list)          # folders the user OK'd adding to
+    # View menu
+    data_unit: str = "auto"              # auto | KB | MB | GB | TB
+    speed_unit: str = "auto"             # auto | KB/s | MB/s | Mbit/s
+    speed_window: int = 10               # seconds the speed is averaged over
+    theme: str = "system"                # system | light | dark
+    show_log: bool = True
 
     @classmethod
     def load(cls, path: str) -> "Settings":

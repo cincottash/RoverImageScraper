@@ -26,6 +26,8 @@ class Report:
     sols_skipped_counts: int = 0         # every camera has at least the API's count (one stats request)
     actions: Counter = field(default_factory=Counter)
     downloaded: int = 0
+    bytes_saved: int = 0                 # size of the photos written to disk this run
+    bytes_received: int = 0              # all photo data received (includes fills that turned out to be present)
     already_present: int = 0             # FILL: matched an existing file by size or bytes, not saved again
     would_download: int = 0              # dry run: upper bound (a FILL may find some already present)
     newly_unavailable: int = 0           # NASA refused (403/404/410) this run; remembered for next time
@@ -195,6 +197,7 @@ class Scraper:
                 if isinstance(result, Exception):
                     self._record_failure(where, photo, result, report)
                     continue
+                report.bytes_received += len(result)
                 h = _sha256(result)
                 if have[h] > 0:
                     have[h] -= 1
@@ -203,6 +206,7 @@ class Scraper:
                 save_new_file(os.path.join(plan.folder, str(index)), result)
                 index += 1
                 report.downloaded += 1
+                report.bytes_saved += len(result)
         finally:
             results.close()
 

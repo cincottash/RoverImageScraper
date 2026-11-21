@@ -105,7 +105,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         print(f"Would download: up to {report.would_download} file(s)")
     else:
-        print(f"Downloaded: {report.downloaded} file(s); already on disk (same bytes): {report.already_present}")
+        print(f"Downloaded: {report.downloaded} file(s), {report.bytes_saved / 1024 ** 3:,.2f} GB; "
+              f"already on disk (same bytes): {report.already_present}")
         print(f"NASA refused (403/404): {report.newly_unavailable} new, {report.known_unavailable} known "
               f"(remembered in {unavailable.path})")
     print(f"Problems/skips: {len(report.problems)}")
