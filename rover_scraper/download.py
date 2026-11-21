@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 
 import requests
@@ -36,23 +37,41 @@ def fetch_bytes(session: requests.Session, url: str, timeout: float = 120, retri
         try:
             r = session.get(url, timeout=timeout, allow_redirects=True)
             if r.status_code == 200:
-                ctype = r.headers.get("Content-Type", "")
-                if ctype.startswith("text/"):
-                    raise DownloadError(f"{url} returned {ctype}, not an image")
                 expected = r.headers.get("Content-Length")
                 if expected is not None and r.headers.get("Content-Encoding") is None \
                         and int(expected) != len(r.content):
                     raise DownloadError(f"{url}: got {len(r.content)} bytes, expected {expected}")
-                return r.content
-            last = DownloadError(f"HTTP {r.status_code} for {url}", status=r.status_code)
-            if r.status_code < 500 and r.status_code != 429:
-                raise last
-            NASA_STATUS.mark_busy()
+                if sniff_extension(r.content[:16]):
+                    return r.content
+                # Not a photo: usually an error page ("502 Bad Gateway") sent in place of the image, sometimes
+                # even labelled as one. Never saved; treated like a server error and tried again.
+                last = DownloadError(f"the server sent {describe_non_image(r.content)}, not a photo")
+                NASA_STATUS.mark_busy()
+            else:
+                last = DownloadError(f"HTTP {r.status_code} for {url}", status=r.status_code)
+                if r.status_code < 500 and r.status_code != 429:
+                    raise last
+                NASA_STATUS.mark_busy()
         except (requests.ConnectionError, requests.Timeout) as e:
             last = e
         if attempt < retries:
             sleep(2 ** attempt)
     raise DownloadError(f"Giving up on {url}: {last}")
+
+
+def describe_non_image(data: bytes) -> str:
+    """Short description of a reply that isn't a photo, for the problems list."""
+    if not data:
+        return "nothing"
+    text = data[:2048].decode("utf-8", "replace")
+    m = re.search(r"<title>\s*(.*?)\s*</title>", text, re.I | re.S)
+    if m:
+        return f'a web page ("{" ".join(m.group(1).split())[:80]}")'
+    if text.lstrip()[:1] == "<":
+        return "a web page"
+    if all(c.isprintable() or c.isspace() for c in text):
+        return f'text ("{" ".join(text.split())[:80]}")'
+    return f"{len(data):,} bytes of an unrecognized type"
 
 
 def head_size(session: requests.Session, url: str, timeout: float = 60, retries: int = 2,
@@ -102,7 +121,7 @@ def sniff_extension(head: bytes) -> str:
 
 def file_extension(data: bytes) -> str:
     """Extension to save a photo with, read from its bytes only (never guessed from its name or URL).
-    "" when the type isn't recognized: the file is then saved as plain <n>, which still counts as a photo."""
+    fetch_bytes only returns bytes of a recognized type, so "" (saved as plain <n>) doesn't happen in practice."""
     return sniff_extension(data[:16])
 
 
