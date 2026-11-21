@@ -8,6 +8,7 @@ import sys
 
 from .api import VERIFIED_ROVERS, ApiError, MarsVistaClient, load_api_key
 from .scraper import Report, Scraper
+from .state import Unavailable, default_state_dir
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -24,6 +25,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--include-unverified", action="store_true",
                    help="allow rovers whose Mars Vista data has not been checked against the old output")
     p.add_argument("--report", help="write a JSON report to this path")
+    p.add_argument("--state-dir", default=default_state_dir(),
+                   help="where to remember photos NASA refuses to serve (default: %(default)s)")
+    p.add_argument("--retry-unavailable", action="store_true",
+                   help="forget remembered 403/404 photos and try them again")
     return p.parse_args(argv)
 
 
@@ -58,7 +63,9 @@ def main(argv: list[str] | None = None) -> int:
               f"what would change, and --allow-existing to add missing files.", file=sys.stderr)
         return 2
 
-    scraper = Scraper(client, args.dest, dry_run=args.dry_run)
+    unavailable = Unavailable(os.path.join(args.state_dir, "unavailable.json"),
+                              ignore_existing=args.retry_unavailable)
+    scraper = Scraper(client, args.dest, dry_run=args.dry_run, unavailable=unavailable)
     report = Report()
     try:
         for rover in rovers:
@@ -70,12 +77,15 @@ def main(argv: list[str] | None = None) -> int:
         print("\nInterrupted. Finished files are kept; re-run to continue.")
 
     print(f"\nSols with photos checked: {report.sols_checked} "
-          f"({report.sols_skipped_quick} complete by quick count check)")
+          f"({report.sols_skipped_quick} complete by manifest match, "
+          f"{report.sols_skipped_counts} by per-camera counts)")
     print(f"Camera folders looked at: {dict(report.actions)}")
     if args.dry_run:
         print(f"Would download: up to {report.would_download} file(s)")
     else:
         print(f"Downloaded: {report.downloaded} file(s); already on disk (same bytes): {report.already_present}")
+        print(f"NASA refused (403/404): {report.newly_unavailable} new, {report.known_unavailable} known "
+              f"(remembered in {unavailable.path})")
     print(f"Problems/skips: {len(report.problems)}")
     for line in report.problems[:50]:
         print("  " + line)
@@ -84,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.report:
         with open(args.report, "w", encoding="utf-8") as f:
             json.dump({"sols_checked": report.sols_checked, "sols_skipped_quick": report.sols_skipped_quick,
+                       "sols_skipped_counts": report.sols_skipped_counts,
                        "actions": report.actions, "downloaded": report.downloaded,
                        "already_present": report.already_present,
                        "would_download": report.would_download, "problems": report.problems,
