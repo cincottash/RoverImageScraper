@@ -69,7 +69,8 @@ Pausing and stopping:
 What the window offers:
 
 - **Rovers and cameras:** tick the rovers to download, and open *Cameras* to leave out cameras you don't want.
-  Spirit and Opportunity are marked *experimental*: Mars Vista's image links for them are often broken, so the
+  Unticking a rover unticks its cameras (ticking it again brings your camera choice back), and ticking a camera
+  ticks its rover. If Start is greyed out, the bar at the bottom says what's missing. Spirit and Opportunity are marked *experimental*: Mars Vista's image links for them are often broken, so the
   app warns you before including them.
 - **Check existing sols for missing photos:** when ticked, the run starts at sol 0 and fills gaps in sols you
   already have (slower). Untick it to only download sols after the last one in the folder.

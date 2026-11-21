@@ -324,16 +324,20 @@ class CameraPanel(QWidget):
         for i, cam in enumerate(cameras):
             box = QCheckBox(cam)
             box.setChecked(cam not in excluded)
-            box.toggled.connect(self.on_change)
+            box.toggled.connect(lambda _=False: self.on_change())
             self.boxes[cam] = box
             self.grid.addWidget(box, i // 2, i % 2)
 
     def _set_all(self, on: bool) -> None:
-        for box in self.boxes.values():
-            box.blockSignals(True)
-            box.setChecked(on)
-            box.blockSignals(False)
+        self.set_checked(lambda cam: on)
         self.on_change()
+
+    def set_checked(self, ticked) -> None:
+        """Tick each camera for which ticked(name) is true, without calling on_change."""
+        for cam, box in self.boxes.items():
+            box.blockSignals(True)
+            box.setChecked(bool(ticked(cam)))
+            box.blockSignals(False)
 
     def excluded(self) -> list[str]:
         return [c for c, b in self.boxes.items() if not b.isChecked()]
@@ -368,6 +372,8 @@ class MainWindow(QMainWindow):
         self.pos: dict = {}                      # where the current download is: rover, rover_index, sol, sol_min
         self.checkpoint: dict | None = load_checkpoint()
         self._loading = False
+        # Camera selection to bring back when an unticked rover is ticked again (and what's saved for it).
+        self.saved_excluded: dict[str, set[str]] = {n: set(c) for n, c in self.settings.excluded_cameras.items()}
         self.speed_samples: collections.deque = collections.deque(maxlen=1000)
         self.api_error = ""
         self.last_summary = ""
@@ -447,6 +453,9 @@ class MainWindow(QMainWindow):
         self.preview_btn.clicked.connect(self._preview)
         bl.addWidget(self.preview_btn)
         bl.addStretch()
+        self.start_hint = label("", "muted")             # why Start is greyed out, when it is
+        self.start_hint.setProperty("tone", "warn")
+        bl.addWidget(self.start_hint)
         self.pause_btn = QPushButton("Pause")
         self.pause_btn.setToolTip("Finish the photos in progress and remember where the download is, so Resume "
                                   "continues from the same sol without re-checking earlier sols")
@@ -475,8 +484,8 @@ class MainWindow(QMainWindow):
         browse.clicked.connect(self._browse)
         row.addWidget(browse)
         lay.addLayout(row)
-        self.folder_hint = label("This folder doesn't exist yet. You'll be asked to create it when you start.",
-                                 "muted", wrap=True)
+        self.folder_hint = label("This folder doesn't exist yet. Start, Quick scan or Full check will offer to "
+                                 "create it.", "muted", wrap=True)
         self.folder_hint.setProperty("tone", "warn")
         self.folder_hint.setVisible(False)
         lay.addWidget(self.folder_hint)
@@ -526,6 +535,7 @@ class MainWindow(QMainWindow):
                 box.setToolTip("Mars Vista's image links for this rover are often broken, so many photos may fail "
                                "to download.")
                 box.toggled.connect(lambda on, n=name: self._experimental_toggled(n, on))
+            box.toggled.connect(lambda _=False, n=name: self._rover_toggled(n))
             box.toggled.connect(self._validate)
             box.toggled.connect(lambda _=False: self._update_library_columns())
             row.addWidget(box)
@@ -541,7 +551,7 @@ class MainWindow(QMainWindow):
             trow.addWidget(toggle)
             trow.addStretch()
             lay.addLayout(trow)
-            panel = CameraPanel(self._cameras_changed)
+            panel = CameraPanel(lambda n=name: self._cameras_changed(n))
             panel.setVisible(False)
             lay.addWidget(panel)
             self.rover_boxes[name], self.rover_status[name] = box, status
@@ -748,8 +758,8 @@ class MainWindow(QMainWindow):
         self._loading = True
         for name, box in self.rover_boxes.items():
             box.setChecked(name in s.rovers)
-            cams = s.known_cameras.get(name, [])
-            self.camera_panels[name].set_cameras(cams, set(s.excluded_cameras.get(name, [])))
+            self.camera_panels[name].set_cameras(s.known_cameras.get(name, []), set())
+            self._apply_rover_cameras(name)
         self.check_existing.setChecked(s.check_existing)
         self.sol_from.setText(s.sol_from)
         self.sol_to.setText(s.sol_to)
@@ -766,8 +776,10 @@ class MainWindow(QMainWindow):
         s.folder = self.folder_edit.text().strip()
         s.rovers = [n for n, b in self.rover_boxes.items() if b.isChecked()]
         for name, panel in self.camera_panels.items():
-            if panel.boxes:
-                s.excluded_cameras[name] = panel.excluded()
+            if panel.boxes and self.rover_boxes[name].isChecked():
+                self.saved_excluded[name] = set(panel.excluded())
+            if name in self.saved_excluded:          # an unticked rover keeps the selection it had
+                s.excluded_cameras[name] = sorted(self.saved_excluded[name])
         s.check_existing = self.check_existing.isChecked()
         s.sol_from, s.sol_to = self.sol_from.text().strip(), self.sol_to.text().strip()
         s.workers = self.workers.value()
@@ -811,6 +823,18 @@ class MainWindow(QMainWindow):
         idle = self.mode == "idle"
         rovers_ok = bool(self._selected_rovers())
         ready = folder_given and key_ok and rovers_ok
+        missing = [text for ok, text in ((folder_given, "choose a photo folder"), (key_ok, "paste your API key"),
+                                         (rovers_ok, "tick at least one rover")) if not ok]
+        listed = ", ".join(missing[:-1]) + " and " + missing[-1] if len(missing) > 1 else "".join(missing)
+        why = f"To start, {listed}." if idle and missing and not self.checkpoint else ""
+        self.start_hint.setText(why)
+        self.start_hint.setVisible(bool(why))
+        self.start_btn.setToolTip(why)
+        self.quick_btn.setToolTip(why or "Count what's on disk and compare with Mars Vista (2 API requests)")
+        self.full_btn.setToolTip(why or "Also find gaps in existing sols (about one API request per sol on disk)")
+        self.preview_btn.setToolTip(
+            "Estimate what a download would add, without downloading anything" if key_ok and rovers_ok else
+            "To preview, " + ", ".join(t for t in missing if t != "choose a photo folder") + ".")
         self.start_btn.setEnabled(idle and (ready or bool(self.checkpoint)))
         self.start_btn.setText("▶  Resume" if self.checkpoint else "▶  Start")
         self.preview_btn.setEnabled(idle and key_ok and rovers_ok)
@@ -908,7 +932,36 @@ class MainWindow(QMainWindow):
         panel.setVisible(not panel.isVisible())
         self._update_camera_toggles()
 
-    def _cameras_changed(self) -> None:
+    def _rover_toggled(self, name: str) -> None:
+        """A rover's cameras follow its checkbox: unticking it unticks all of its cameras (remembering which
+        were ticked), and ticking it again brings that selection back (all cameras if there was none)."""
+        if self._loading:
+            return
+        panel = self.camera_panels[name]
+        if not self.rover_boxes[name].isChecked() and panel.counts()[0]:
+            self.saved_excluded[name] = set(panel.excluded())
+        self._apply_rover_cameras(name)
+        self._update_camera_toggles()
+
+    def _apply_rover_cameras(self, name: str) -> None:
+        panel = self.camera_panels[name]
+        if not self.rover_boxes[name].isChecked():
+            panel.set_checked(lambda cam: False)
+            return
+        excluded = self.saved_excluded.get(name, set())
+        if not set(panel.boxes) - excluded:          # nothing would be ticked: use all cameras
+            excluded = set()
+        panel.set_checked(lambda cam: cam not in excluded)
+
+    def _cameras_changed(self, name: str) -> None:
+        """Ticking a camera ticks its rover; unticking a rover's last camera unticks the rover."""
+        on, total = self.camera_panels[name].counts()
+        box = self.rover_boxes[name]
+        if on and not box.isChecked():
+            self.saved_excluded[name] = set(self.camera_panels[name].excluded())
+            box.setChecked(True)          # may ask first (Spirit/Opportunity); answering No unticks it again
+        elif total and not on and box.isChecked():
+            box.setChecked(False)
         self._update_camera_toggles()
 
     def _update_camera_toggles(self) -> None:
@@ -1398,11 +1451,11 @@ class MainWindow(QMainWindow):
             cams = info.get(name, {}).get("cameras")
             if cams:
                 self.settings.known_cameras[name] = cams
-                excluded = set(self.settings.excluded_cameras.get(name, []))
                 panel = self.camera_panels[name]
-                if panel.boxes:
-                    excluded = set(panel.excluded())
-                panel.set_cameras(cams, excluded)
+                if panel.boxes and self.rover_boxes[name].isChecked():
+                    self.saved_excluded[name] = set(panel.excluded())
+                panel.set_cameras(cams, set())
+                self._apply_rover_cameras(name)
         self._update_camera_toggles()
         self._refresh_library()
 
