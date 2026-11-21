@@ -43,20 +43,21 @@ numbered 0, 1, 2… within each camera folder. Files have no extension, but they
 
 ## Usage
 
-The destination folder must already exist.
+Pass the folder you want the photos saved in. It can be on any drive, and it must already exist. In the examples
+below, replace `C:\path\to\MarsPhotos` with your folder (on macOS or Linux, a path such as `~/MarsPhotos`).
 
 ```bat
 :: First download into an empty folder (all of Curiosity and Perseverance: about 1.3 million photos, ~270 GB)
-.venv\Scripts\python main.py D:\RoverPics
+.venv\Scripts\python main.py "C:\path\to\MarsPhotos"
 
 :: Preview what would be downloaded, without writing anything
-.venv\Scripts\python main.py D:\RoverPics --dry-run
+.venv\Scripts\python main.py "C:\path\to\MarsPhotos" --dry-run
 
 :: Update a folder that already has photos (adds missing files only)
-.venv\Scripts\python main.py D:\RoverPics --allow-existing
+.venv\Scripts\python main.py "C:\path\to\MarsPhotos" --allow-existing
 
 :: Only one rover, only some sols
-.venv\Scripts\python main.py D:\RoverPics --allow-existing --rovers perseverance --sol-min 1000 --sol-max 1100
+.venv\Scripts\python main.py "C:\path\to\MarsPhotos" --allow-existing --rovers perseverance --sol-min 1000 --sol-max 1100
 ```
 
 | Option | Meaning |
