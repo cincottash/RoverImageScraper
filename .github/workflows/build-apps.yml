@@ -1,7 +1,7 @@
 # Builds the desktop app for Windows (RoverImageScraper.exe) and Linux (RoverImageScraper-x86_64.AppImage).
 #
-# - Pull requests and manual runs: build both, check that each starts, and keep them as downloadable artifacts of
-#   the run for 14 days (nothing is published).
+# - Pull requests, merges into main, and manual runs: build both, check that each starts, and keep them as
+#   downloadable artifacts of the run for 14 days (nothing is published).
 # - A pushed version tag (for example v1.1.0): also publish a GitHub Release with both files attached.
 #   To make a release:   git tag v1.1.0   then   git push origin v1.1.0
 
@@ -11,6 +11,7 @@ on:
   pull_request:
   workflow_dispatch:
   push:
+    branches: [main]       # every merge: check main builds, and keep an up-to-date .exe and AppImage
     tags: ["v*"]
 
 permissions:
