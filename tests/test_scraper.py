@@ -49,6 +49,14 @@ def fake_fetch(_session, url):
     return content(i)
 
 
+def no_head(_session, url):
+    return None   # server gives no size: every FILL candidate is downloaded and compared by bytes
+
+
+def sized_head(_session, url):
+    return len(fake_fetch(None, url))
+
+
 def write_files(folder, contents, start=0):
     os.makedirs(folder, exist_ok=True)
     for i, data in enumerate(contents, start):
@@ -58,7 +66,7 @@ def write_files(folder, contents, start=0):
 
 def run(tmp_path, by_sol, rover="Curiosity", **kw):
     client = FakeClient(by_sol)
-    report = Scraper(client, str(tmp_path), log=lambda m: None, fetch=fake_fetch, **kw) \
+    report = Scraper(client, str(tmp_path), log=lambda m: None, fetch=fake_fetch, head=no_head, **kw) \
         .run(rover, min(by_sol), max(by_sol))
     return client, report
 
@@ -162,6 +170,30 @@ def test_fill_adds_only_photos_not_already_present_any_order(tmp_path):
     assert report.downloaded == 2 and report.already_present == 2
 
 
+def test_fill_skips_downloads_when_sizes_match(tmp_path):
+    folder = tmp_path / "Curiosity" / "5" / "NAVCAM"
+    write_files(str(folder), [content(1), content(22)])            # sizes 7 and 8
+    fetched = []
+
+    def tracking_fetch(session, url):
+        fetched.append(url)
+        return fake_fetch(session, url)
+
+    client = FakeClient({5: [photo(1), photo(22), photo(333)]})
+    report = Scraper(client, str(tmp_path), log=lambda m: None, fetch=tracking_fetch, head=sized_head) \
+        .run("Curiosity", 5, 5)
+    assert fetched == ["https://img/333.jpg"]                      # only the photo with an unmatched size
+    assert files(folder)["2"] == content(333) and report.already_present == 2
+
+
+def test_parallel_workers_keep_numbering_contiguous(tmp_path):
+    photos = [photo(i) for i in range(1, 51)]
+    _, report = run(tmp_path, {5: photos}, workers=8)
+    got = files(tmp_path / "Curiosity" / "5" / "NAVCAM")
+    assert sorted(got, key=int) == [str(i) for i in range(50)]
+    assert sorted(got.values()) == sorted(content(i) for i in range(1, 51))
+
+
 def test_fill_keeps_listed_duplicates(tmp_path):
     folder = tmp_path / "Curiosity" / "5" / "NAVCAM"
     write_files(str(folder), [content(1)])
@@ -193,13 +225,13 @@ def test_403_photo_remembered_and_folder_counts_as_complete(tmp_path):
     FAIL_IDS.add(2)
     try:
         client = FakeClient(by_sol)
-        r1 = Scraper(client, str(dest), log=lambda m: None, fetch=fetch_403,
+        r1 = Scraper(client, str(dest), log=lambda m: None, fetch=fetch_403, head=no_head,
                      unavailable=Unavailable(state)).run("Curiosity", 5, 5)
         assert r1.newly_unavailable == 1 and not r1.problems
         assert files(dest / "Curiosity" / "5" / "NAVCAM") == {"0": content(1), "1": content(3)}
         # second run, fresh state object loaded from disk: 2 files on disk, 3 listed - 1 refused = complete
         client2 = FakeClient(by_sol)
-        r2 = Scraper(client2, str(dest), log=lambda m: None, fetch=fetch_403,
+        r2 = Scraper(client2, str(dest), log=lambda m: None, fetch=fetch_403, head=no_head,
                      unavailable=Unavailable(state)).run("Curiosity", 5, 5)
         assert client2.listed == [] and r2.sols_skipped_counts == 1 and r2.downloaded == 0
     finally:

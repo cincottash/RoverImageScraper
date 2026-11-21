@@ -38,6 +38,32 @@ def fetch_bytes(session: requests.Session, url: str, timeout: float = 120, retri
     raise DownloadError(f"Giving up on {url}: {last}")
 
 
+def head_size(session: requests.Session, url: str, timeout: float = 60, retries: int = 2,
+              sleep=time.sleep) -> int | None:
+    """Size of the remote file from a HEAD request (no download), or None if the server doesn't say."""
+    for attempt in range(retries + 1):
+        try:
+            r = session.head(url, timeout=timeout, allow_redirects=True)
+            if r.status_code == 200 and r.headers.get("Content-Encoding") is None:
+                length = r.headers.get("Content-Length")
+                return int(length) if length is not None else None
+            if r.status_code < 500 and r.status_code != 429:
+                return None
+        except (requests.ConnectionError, requests.Timeout):
+            pass
+        if attempt < retries:
+            sleep(2 ** attempt)
+    return None
+
+
+def make_session(pool_size: int) -> requests.Session:
+    s = requests.Session()
+    adapter = requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=pool_size)
+    s.mount("https://", adapter)
+    s.mount("http://", adapter)
+    return s
+
+
 def save_new_file(path: str, data: bytes) -> None:
     """Write data to path. Raises FileExistsError if path already exists; it never overwrites."""
     if os.path.lexists(path):
