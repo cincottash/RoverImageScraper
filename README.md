@@ -153,9 +153,11 @@ the theme you had.
 
 The layout is `<photo folder>/<Rover>/<sol>/<CAMERA>/<n>.<type>`. Within each camera folder, photos are numbered
 0, 1, 2… in the order the source lists them. The extension (almost always `.jpg`) comes from the file's own
-contents, never guessed from its name or web address, so your file manager can show previews. A file whose type
-isn't recognized is saved as just `<n>`. Files named just `<n>`, as older versions saved them, count toward a
-folder's total too, and the app never renames them.
+contents, never guessed from its name or web address, so your file manager can show previews. Only real photos
+(JPEG, PNG, GIF or TIFF) are saved: if a server sends something else in place of a photo, such as a
+"502 Bad Gateway" error page, it's tried again a few times and then counted as an error and listed under *Show
+problems*. It's not saved, so the next run sees the photo as missing and downloads it. Files named just `<n>`, as
+older versions saved them, count toward a folder's total too, and the app never renames them.
 
 ## How it decides what to download
 
