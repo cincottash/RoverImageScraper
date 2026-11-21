@@ -41,6 +41,15 @@ def count_numbered(folder: str) -> tuple[int, int]:
     return len(numbers), (max(numbers) + 1 if numbers else 0)
 
 
+def last_sol_on_disk(dest: str, rover: str) -> int | None:
+    """Highest sol folder number for a rover, or None if the rover has no sol folders."""
+    try:
+        sols = [int(e.name) for e in os.scandir(os.path.join(dest, rover)) if e.is_dir() and e.name.isdigit()]
+    except FileNotFoundError:
+        return None
+    return max(sols) if sols else None
+
+
 def disk_camera_counts(dest: str, rover: str, sol: int) -> dict[str, int] | None:
     """Numbered-file count per camera folder for one sol, or None if the sol folder doesn't exist."""
     sol_dir = os.path.join(dest, rover, str(sol))

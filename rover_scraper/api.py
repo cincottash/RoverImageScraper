@@ -6,18 +6,22 @@ Perseverance camera names, and v2 paging with its default sort dropped a photo.
 from __future__ import annotations
 
 import os
+import threading
 import time
 from dataclasses import dataclass
 from typing import Callable
 
 import requests
 
+from ratelimit import RequestTracker
+
 BASE_URL = "https://api.marsvista.dev"
 PAGE_SIZE = 100
 
-# Rovers whose Mars Vista data has been checked against the old API's output by hash comparison.
-# Spirit and Opportunity image links from Mars Vista were broken or did not match, so they are excluded.
-VERIFIED_ROVERS = ("Curiosity", "Perseverance")
+# Curiosity and Perseverance come from Mars Vista (checked against the old API's output by hash comparison).
+# Spirit and Opportunity come from NASA's PDS archive (see pds.py), because Mars Vista's lists for them are
+# incomplete. Their counts were checked against folders made with the old API.
+SUPPORTED_ROVERS = ("Curiosity", "Perseverance", "Spirit", "Opportunity")
 
 
 class ApiError(Exception):
@@ -43,13 +47,17 @@ class RoverInfo:
 
 @dataclass(frozen=True)
 class SolSummary:
-    total_photos: int
+    total_photos: int | None          # None when the source can't tell without listing the sol (NASA PDS)
     cameras: tuple[str, ...]
 
 
+KEYRING_SERVICE = "RoverImageScraper"
+KEYRING_USER = "marsvista-api-key"
+
+
 def load_api_key() -> str:
-    """Read MARSVISTA_API_KEY from the environment. On Windows, fall back to the user registry, where `setx`
-    stores it, so the key works in shells that were opened before it was set."""
+    """Find the API key: the MARSVISTA_API_KEY environment variable, then (Windows) the user registry where `setx`
+    stores it, then the key saved by the GUI in the system credential store."""
     key = os.environ.get("MARSVISTA_API_KEY")
     if not key and os.name == "nt":
         try:
@@ -59,8 +67,30 @@ def load_api_key() -> str:
         except OSError:
             key = None
     if not key:
-        raise ApiError("No API key: set the MARSVISTA_API_KEY environment variable")
+        key = load_saved_api_key()
+    if not key:
+        raise ApiError("No API key: set the MARSVISTA_API_KEY environment variable, or save one in the GUI")
     return key
+
+
+def load_saved_api_key() -> str | None:
+    """The key saved by the GUI in the system credential store (Windows Credential Manager), if any."""
+    try:
+        import keyring
+        return keyring.get_password(KEYRING_SERVICE, KEYRING_USER)
+    except Exception:  # noqa: BLE001 - keyring not installed or no backend: treat as not saved
+        return None
+
+
+def save_api_key(key: str) -> None:
+    import keyring
+    if key:
+        keyring.set_password(KEYRING_SERVICE, KEYRING_USER, key)
+    else:
+        try:
+            keyring.delete_password(KEYRING_SERVICE, KEYRING_USER)
+        except Exception:  # noqa: BLE001 - nothing saved
+            pass
 
 
 def compat_image_url(rover: str, url: str) -> str:
@@ -74,20 +104,54 @@ def compat_image_url(rover: str, url: str) -> str:
     return url
 
 
+class Cancelled(Exception):
+    """Raised when the user stops a run while the client is waiting."""
+
+
 class MarsVistaClient:
     def __init__(self, api_key: str, session: requests.Session | None = None, timeout: float = 60,
-                 max_retries: int = 5, sleep: Callable[[float], None] = time.sleep):
+                 max_retries: int = 5, sleep: Callable[[float], None] | None = None,
+                 tracker: RequestTracker | None = None, cancel: threading.Event | None = None,
+                 on_wait: Callable[[float, str], None] | None = None):
+        """tracker counts requests against the quota; cancel lets a Stop interrupt waits; on_wait(seconds,
+        reason) is called when a rate-limit wait of 5 s or more starts (the CLI prints it)."""
         self.session = session or requests.Session()
         self.session.headers["X-API-Key"] = api_key
         self.timeout = timeout
         self.max_retries = max_retries
-        self.sleep = sleep
+        self.tracker = tracker or RequestTracker()
+        self.cancel = cancel or threading.Event()
+        self.on_wait = on_wait
+        self._sleep_fn = sleep
+
+    def _sleep(self, seconds: float) -> None:
+        if self._sleep_fn is not None:          # tests
+            self._sleep_fn(seconds)
+        elif self.cancel.wait(seconds):
+            raise Cancelled()
+        if self.cancel.is_set():
+            raise Cancelled()
+
+    def _wait_for_quota(self, seconds: float, reason: str) -> None:
+        self.tracker.begin_wait(seconds, reason)
+        if self.on_wait and seconds >= 5:
+            self.on_wait(seconds, reason)
+        try:
+            self._sleep(seconds)
+        finally:
+            self.tracker.end_wait()
 
     def _get(self, path: str, params: dict | None = None) -> dict:
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
+            if self.cancel.is_set():
+                raise Cancelled()
+            seconds, reason = self.tracker.seconds_until_allowed()
+            if seconds > 0:
+                self._wait_for_quota(seconds, reason)
             wait = 2 ** attempt
             try:
+                self.tracker.record()
                 r = self.session.get(BASE_URL + path, params=params, timeout=self.timeout)
             except (requests.ConnectionError, requests.Timeout) as e:
                 last_error = e
@@ -96,11 +160,13 @@ class MarsVistaClient:
                     return r.json()
                 last_error = ApiError(f"HTTP {r.status_code} for {r.url}: {r.text[:300]}")
                 if r.status_code == 429:
-                    wait = _seconds_until_reset(r) or 60
-                elif r.status_code < 500:
+                    if attempt < self.max_retries:
+                        self._wait_for_quota(min(_seconds_until_reset(r) or 60, 3600), "server asked us to wait")
+                    continue
+                if r.status_code < 500:
                     raise last_error
             if attempt < self.max_retries:
-                self.sleep(min(wait, 3600))
+                self._sleep(min(wait, 3600))
         raise ApiError(f"Giving up after {self.max_retries + 1} attempts: {last_error}")
 
     def rovers(self) -> list[RoverInfo]:

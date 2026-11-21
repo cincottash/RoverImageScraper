@@ -13,6 +13,22 @@ class DownloadError(Exception):
         self.status = status
 
 
+class NasaStatus:
+    """When NASA's image servers last pushed back (HTTP 429 or 5xx). Read by the GUI to show "NASA busy"."""
+
+    def __init__(self):
+        self.last_busy = 0.0
+
+    def mark_busy(self) -> None:
+        self.last_busy = time.time()
+
+    def busy_recently(self, seconds: float = 30) -> bool:
+        return time.time() - self.last_busy < seconds
+
+
+NASA_STATUS = NasaStatus()
+
+
 def fetch_bytes(session: requests.Session, url: str, timeout: float = 120, retries: int = 4,
                 sleep=time.sleep) -> bytes:
     last: Exception | None = None
@@ -31,6 +47,7 @@ def fetch_bytes(session: requests.Session, url: str, timeout: float = 120, retri
             last = DownloadError(f"HTTP {r.status_code} for {url}", status=r.status_code)
             if r.status_code < 500 and r.status_code != 429:
                 raise last
+            NASA_STATUS.mark_busy()
         except (requests.ConnectionError, requests.Timeout) as e:
             last = e
         if attempt < retries:
@@ -56,8 +73,14 @@ def head_size(session: requests.Session, url: str, timeout: float = 60, retries:
     return None
 
 
+USER_AGENT = "RoverImageScraper/1.0 (+https://github.com/cincottash/RoverImageScraper)"
+
+
 def make_session(pool_size: int) -> requests.Session:
     s = requests.Session()
+    # NASA's Planetary Data System (where Spirit and Opportunity images are) refuses requests that don't say
+    # what program is making them, so name this one.
+    s.headers["User-Agent"] = USER_AGENT
     adapter = requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=pool_size)
     s.mount("https://", adapter)
     s.mount("http://", adapter)
