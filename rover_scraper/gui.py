@@ -882,6 +882,12 @@ class MainWindow(QMainWindow):
             right.addWidget(c)
         self.activity_card = self._build_activity_card()
         right.addWidget(self.activity_card, 1)
+        # Leftover height when every card on the right is folded goes here, so Activity stays at the bottom.
+        right.insertStretch(right.indexOf(self.activity_card), 0)
+        self.foldable: dict[str, tuple[QFrame, QWidget, QToolButton]] = {}
+        left_cards = [self.left_col.itemAt(i).widget() for i in range(self.left_col.count())]
+        for frame in [c for c in left_cards if c is not None] + self.right_cards:
+            self._make_foldable(frame)
 
         bottom = QFrame()
         bottom.setObjectName("bottomBar")
@@ -1214,6 +1220,69 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.banner)
         return frame
 
+    def _make_foldable(self, frame: QFrame) -> None:
+        """Give a card a Hide/Show link in its title row that folds it down to that row. The card's contents
+        move into one body widget, so showing it again keeps each part's own shown/hidden state."""
+        lay = frame.layout()
+        first = lay.itemAt(0)
+        if first.widget() is not None:              # a plain title label: make it a row with room for the link
+            title = lay.takeAt(0).widget()
+            head = QHBoxLayout()
+            head.addWidget(title)
+            head.addStretch()
+            lay.insertLayout(0, head)
+        else:                                       # already a row (Library status)
+            head = first.layout()
+            title = next(head.itemAt(i).widget() for i in range(head.count())
+                         if isinstance(head.itemAt(i).widget(), QLabel))
+        body = QWidget()
+        body_lay = QVBoxLayout(body)
+        body_lay.setContentsMargins(0, 0, 0, 0)
+        body_lay.setSpacing(lay.spacing())
+        while lay.count() > 1:
+            stretch = lay.stretch(1)
+            item = lay.takeAt(1)
+            if item.widget() is not None:
+                body_lay.addWidget(item.widget(), stretch)
+            elif item.layout() is not None:
+                child = item.layout()
+                child.setParent(None)
+                body_lay.addLayout(child, stretch)
+            else:
+                body_lay.addItem(item)
+                body_lay.setStretch(body_lay.count() - 1, stretch)
+        lay.addWidget(body, 1)
+        toggle = link_button("Hide ▾")
+        name = title.text()
+        toggle.clicked.connect(lambda: self._set_card_open(name, not self.foldable[name][1].isVisibleTo(frame)))
+        head.addWidget(toggle)
+        self.foldable[name] = (frame, body, toggle)
+
+    def _set_card_open(self, name: str, open_: bool, save: bool = True) -> None:
+        frame, body, toggle = self.foldable[name]
+        body.setVisible(open_)
+        toggle.setText("Hide ▾" if open_ else "Show ▴")
+        frame.setSizePolicy(QSizePolicy.Policy.Preferred,
+                            QSizePolicy.Policy.Preferred if open_ else QSizePolicy.Policy.Maximum)
+        folded = [n for n in self.settings.collapsed_cards if n != name] + ([] if open_ else [name])
+        self.settings.collapsed_cards = folded
+        self._update_right_stretch()
+        if save:
+            self._save_settings()
+
+    def _apply_folded_cards(self) -> None:
+        for name in self.foldable:
+            self._set_card_open(name, name not in self.settings.collapsed_cards, save=False)
+
+    def _update_right_stretch(self) -> None:
+        """Spare height on the right goes to the activity log when it's shown, otherwise to the open cards."""
+        log_open = self.settings.show_log
+        self.right_col.setStretchFactor(self.activity_card, 1 if log_open else 0)
+        for c in self.right_cards:
+            body = next((b for f, b, _ in self.foldable.values() if f is c), None)
+            open_ = body is None or not body.isHidden()
+            self.right_col.setStretchFactor(c, 0 if log_open or not open_ else 1)
+
     def _build_activity_card(self) -> QFrame:
         frame, lay = card()
         head = QHBoxLayout()
@@ -1256,6 +1325,7 @@ class MainWindow(QMainWindow):
         self._update_camera_toggles()
         self._update_library_columns()
         self._set_log_visible(s.show_log)
+        self._apply_folded_cards()
         if self.checkpoint:
             self._show_paused_state()
 
@@ -1485,14 +1555,15 @@ class MainWindow(QMainWindow):
         # Shown: the activity log takes the spare height. Hidden: the card shrinks to its header (with a "Show"
         # link) at the bottom, and the cards above share the space. The log keeps recording either way.
         self.log_view.setVisible(visible)
-        self.right_col.setStretchFactor(self.activity_card, 1 if visible else 0)
-        for c in self.right_cards:
-            self.right_col.setStretchFactor(c, 0 if visible else 1)
+        self.activity_card.setSizePolicy(QSizePolicy.Policy.Preferred,
+                                         QSizePolicy.Policy.Preferred if visible else QSizePolicy.Policy.Maximum)
         self.log_toggle.setText("Hide ▾" if visible else "Show ▴")
         self.log_toggle.setToolTip("" if visible else "Show the activity log (also under View > Show activity log)")
         if hasattr(self, "act_log") and self.act_log.isChecked() != visible:
             self.act_log.setChecked(visible)
         self.settings.show_log = visible
+        if hasattr(self, "foldable"):
+            self._update_right_stretch()
 
     # ---- menus -------------------------------------------------------------------------------------------
 
@@ -1611,14 +1682,15 @@ class MainWindow(QMainWindow):
             self.choice_actions.setdefault(attr, []).append((value, act))
 
     # View menu choices, and the download options in the left column (File > Settings > Reset settings to defaults).
-    VIEW_FIELDS = ("data_unit", "speed_unit", "speed_window", "theme", "show_log")
+    VIEW_FIELDS = ("data_unit", "speed_unit", "speed_window", "theme", "show_log", "collapsed_cards")
     OPTION_FIELDS = ("rovers", "excluded_cameras", "check_existing", "sol_from", "sol_to", "workers", "limit_on",
                      "limit_files", "limit_period")
 
     def _reset_view(self) -> None:
         answer = QMessageBox.question(
             self, "Reset view options?",
-            "Put data and speed units, speed averaging, theme and the activity log back to their defaults?")
+            "Put data and speed units, speed averaging, theme, the activity log and folded cards back to their "
+            "defaults?")
         if answer != QMessageBox.StandardButton.Yes:
             return
         defaults = Settings()
@@ -1626,6 +1698,7 @@ class MainWindow(QMainWindow):
             setattr(self.settings, attr, getattr(defaults, attr))
         self._sync_choice_checks()
         self._set_log_visible(self.settings.show_log)
+        self._apply_folded_cards()
         self._apply_theme()
         self._update_counters()
         self._save_settings()

@@ -91,9 +91,12 @@ Then:
 - **Mars Vista API usage:** requests used this hour and today, counted by the app (Mars Vista allows 10,000 per
   hour and 100,000 per day). Near a limit, an amber banner shows a countdown and the download carries on by
   itself afterwards. *NASA archive* counts requests for Spirit and Opportunity, which have no limit.
-- **Activity:** a running log of what the app is doing. *Hide* folds it down to just its title bar, giving the space
-  to the cards above; *Show* opens it again. *View > Detailed activity log* adds a line for every sol checked and every photo
-  saved or skipped.
+- **Activity:** a running log of what the app is doing. *View > Detailed activity log* adds a line for every sol
+  checked and every photo saved or skipped.
+
+Every card has a *Hide* link in its title bar that folds it down to just that bar (*Show* opens it again), so you
+can keep only what you use on screen. The app remembers which cards are folded; *View > Reset view options* opens
+them all again.
 
 ### Pausing, stopping and changing settings
 

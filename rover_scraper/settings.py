@@ -32,6 +32,7 @@ class Settings:
     speed_window: int = 10               # seconds the speed is averaged over
     theme: str = "dark"                  # "system" (match the OS) or a theme key from gui.THEMES
     show_log: bool = True
+    collapsed_cards: list[str] = field(default_factory=list)   # titles of cards folded to their title bar
     verbose_log: bool = False            # View > Detailed activity log
 
     @classmethod
