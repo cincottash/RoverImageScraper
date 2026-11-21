@@ -39,6 +39,7 @@ def build(out: str) -> str:
                 "--name", NAME, "--onefile", "--windowed", "--noconfirm", "--clean", "--icon", ico,
                 "--paths", SRC,
                 "--add-data", f"{os.path.join(SRC, 'check.svg')}{os.pathsep}.",
+                "--add-data", f"{os.path.join(SRC, 'check_dark.svg')}{os.pathsep}.",
                 "--add-data", f"{os.path.join(ROOT, 'packaging', 'icon.svg')}{os.pathsep}.",
                 "--hidden-import", "PySide6.QtSvg",          # draws the tick in checkboxes (an SVG image)
                 "--distpath", out, "--workpath", work, "--specpath", work]

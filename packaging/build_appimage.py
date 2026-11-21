@@ -63,6 +63,7 @@ def build(out: str, appimagetool: str) -> str:
                 "--name", NAME, "--onedir", "--windowed", "--noconfirm", "--clean",
                 "--paths", SRC,
                 "--add-data", f"{os.path.join(SRC, 'check.svg')}{os.pathsep}.",
+                "--add-data", f"{os.path.join(SRC, 'check_dark.svg')}{os.pathsep}.",
                 "--add-data", f"{icon_svg}{os.pathsep}.",
                 "--hidden-import", "PySide6.QtSvg",
                 "--distpath", dist, "--workpath", os.path.join(work, "build"), "--specpath", work]

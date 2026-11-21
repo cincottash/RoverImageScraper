@@ -112,9 +112,10 @@ Then:
   to their defaults); quit.
 - **Download:** Start, Pause and Stop, Quick scan, Full check and Preview (the same as the buttons), and *Retry
   photos NASA refused* on the next run.
-- **View:** the theme (dark by default; also match the operating system, light, or one of ten space-themed color
-  schemes), units for data and speed and how long *Speed* is averaged over, show or hide the activity log, the
-  detailed activity log, and *Reset view options*.
+- **View:** the theme (dark by default; also match the operating system, light, high contrast, and about sixty
+  more: space-themed ones made for this app, plus light and dark classics from popular editor color schemes),
+  units for data and speed and how long *Speed* is averaged over, show or hide the activity log, the detailed
+  activity log, and *Reset view options*.
 - **Help:** the Mars Vista website, open the app data folder, report a problem (opens the project's GitHub
   issues), and *About*.
 
@@ -319,3 +320,7 @@ distribute a modified version, it must also be released under the GPL-3.0 with i
 It uses [PySide6 / Qt](https://www.qt.io/qt-for-python) (LGPL-3.0), [requests](https://requests.readthedocs.io)
 (Apache-2.0) and [keyring](https://github.com/jaraco/keyring) (MIT). The photos themselves are NASA's (image
 credit: NASA/JPL-Caltech).
+
+The *Classic* themes use the colors of these open-source color schemes, by their authors: Nord, Dracula,
+Solarized, Gruvbox, One Dark / One Light, Tokyo Night, Catppuccin, Rosé Pine, Everforest, Kanagawa, Ayu,
+Palenight, Night Owl, Cobalt2, Synthwave '84, Tomorrow, Monokai and Zenburn.

@@ -1,18 +1,34 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
   <defs>
-    <radialGradient id="mars" cx="36%" cy="32%" r="78%">
-      <stop offset="0" stop-color="#F6B072"/>
-      <stop offset="0.45" stop-color="#DB6A32"/>
-      <stop offset="0.8" stop-color="#A63F1C"/>
-      <stop offset="1" stop-color="#6E2410"/>
+    <radialGradient id="space" cx="40%" cy="36%" r="75%">
+      <stop offset="0" stop-color="#26346B"/>
+      <stop offset="0.6" stop-color="#121A3A"/>
+      <stop offset="1" stop-color="#070A18"/>
     </radialGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#C9CFDA"/>
+    </linearGradient>
   </defs>
-  <circle cx="128" cy="128" r="122" fill="url(#mars)"/>
-  <path d="M 64,24 A 122,122 0 0 1 192,24 Q 128,46 64,24 Z" fill="#FBF3EC"/>
-  <path d="M 52,118 Q 100,100 150,112 T 214,132" fill="none" stroke="#7A2A14" stroke-width="9" stroke-linecap="round" opacity="0.85"/>
-  <path d="M 70,150 Q 104,138 134,156 Q 112,176 78,170 Z" fill="#8E3518" opacity="0.7"/>
-  <path d="M 150,170 Q 186,160 206,178 Q 186,196 158,188 Z" fill="#8E3518" opacity="0.6"/>
-  <circle cx="92" cy="80" r="11" fill="#B9502A" opacity="0.8"/>
-  <circle cx="92" cy="80" r="5" fill="#E58A52"/>
-  <circle cx="170" cy="76" r="7" fill="#B9502A" opacity="0.7"/>
+  <circle cx="128" cy="128" r="124" fill="url(#space)"/>
+  <circle cx="52" cy="70" r="3" fill="#FFFFFF"/>
+  <circle cx="80" cy="40" r="2" fill="#FFFFFF" opacity="0.8"/>
+  <circle cx="200" cy="176" r="3" fill="#FFFFFF"/>
+  <circle cx="186" cy="214" r="2" fill="#FFFFFF" opacity="0.7"/>
+  <circle cx="44" cy="150" r="2" fill="#FFFFFF" opacity="0.7"/>
+  <circle cx="214" cy="96" r="2.5" fill="#FFFFFF" opacity="0.85"/>
+  <circle cx="120" cy="226" r="2" fill="#FFFFFF" opacity="0.6"/>
+  <circle cx="64" cy="200" r="3" fill="#FFFFFF" opacity="0.9"/>
+  <g transform="rotate(-45 128 128)">
+    <path d="M 110,176 Q 128,250 146,176 Z" fill="#F97316"/>
+    <path d="M 117,176 Q 128,226 139,176 Z" fill="#FDE68A"/>
+    <path d="M 98,128 L 70,168 L 70,184 L 98,168 Z" fill="#E2482B"/>
+    <path d="M 158,128 L 186,168 L 186,184 L 158,168 Z" fill="#E2482B"/>
+    <path d="M 128,28 C 152,48 160,86 160,128 L 160,172 L 96,172 L 96,128 C 96,86 104,48 128,28 Z" fill="url(#body)"/>
+    <path d="M 128,28 C 141,39 149,52 154,66 L 102,66 C 107,52 115,39 128,28 Z" fill="#E2482B"/>
+    <circle cx="128" cy="104" r="17" fill="#4C5568"/>
+    <circle cx="128" cy="104" r="11" fill="#38BDF8"/>
+    <rect x="106" y="170" width="44" height="10" rx="3" fill="#4C5568"/>
+    <path d="M 128,140 L 128,170" stroke="#E2482B" stroke-width="8" stroke-linecap="round"/>
+  </g>
 </svg>

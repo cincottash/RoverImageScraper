@@ -166,34 +166,177 @@ def _variant(base: dict, bg, card, border, text, muted, accent, accent_hover, in
                            log_bg=input), **rest}
 
 
-# (menu name, setting value, colors). Light and Dark first, then the extra themes.
+# Themes: (group, menu name, setting value, colors). "Basic" themes sit at the top of View > Theme; the others
+# are grouped in submenus. Each is built on Light or Dark (status colors) with its own surfaces and accent:
+#   _variant(base, bg, card, border, text, muted, accent, accent_hover, input, track, accent_text=...)
+# The "Classic" themes use the published colors of popular open-source editor color schemes (Nord, Dracula,
+# Solarized, Gruvbox, Catppuccin and others; see the README); the "Space" themes are this app's own.
+L, D = LIGHT, DARK
 THEMES = [
-    ("Light", "light", LIGHT),
-    ("Dark", "dark", DARK),
-    ("Mars Day", "mars_day", _variant(LIGHT, "#F6EEE6", "#FFFBF7", "#E8D6C6", "#3B2418", "#8A6A58",
-                                      "#C2410C", "#9A3412", "#FFFFFF", "#F0E2D6")),
-    ("Red Planet", "red_planet", _variant(DARK, "#1C1210", "#271916", "#3D2620", "#F3E3DC", "#B89A8E",
-                                          "#E2582B", "#F07A4F", "#1F1412", "#35221D")),
-    ("Deep Space", "deep_space", _variant(DARK, "#0B1020", "#121A2E", "#22304D", "#E1E7F5", "#8D9AB8",
-                                          "#4F7CFF", "#7A9CFF", "#0E1527", "#1C2742")),
-    ("Nebula", "nebula", _variant(DARK, "#151022", "#1E1730", "#342850", "#ECE6F8", "#A699C2",
-                                  "#A855F7", "#C084FC", "#18122A", "#2A2140")),
-    ("Aurora", "aurora", _variant(DARK, "#0C1716", "#13211F", "#22383A", "#DDF2EE", "#8EB3AD",
-                                  "#14B8A6", "#2DD4BF", "#0F1C1B", "#1C302D", accent_text="#04201C")),
-    ("Starlight", "starlight", _variant(DARK, "#050608", "#0E1014", "#1E222A", "#F1F3F6", "#8C94A3",
-                                        "#38BDF8", "#7DD3FC", "#08090C", "#181B22", accent_text="#031722")),
-    ("Lunar", "lunar", _variant(LIGHT, "#ECEDEF", "#F8F8F9", "#D5D7DB", "#202226", "#686C74",
-                                "#4B5563", "#374151", "#FFFFFF", "#E1E3E6")),
-    ("Ice Moon", "ice_moon", _variant(LIGHT, "#EEF5FA", "#FAFDFF", "#D3E3EE", "#14283A", "#5C7489",
-                                      "#0284C7", "#0369A1", "#FFFFFF", "#DDEBF5")),
-    ("Solar Flare", "solar_flare", _variant(DARK, "#17130A", "#211B0F", "#3A301A", "#F6EEDB", "#B8A57E",
-                                            "#F59E0B", "#FBBF24", "#1B160C", "#2F2715", accent_text="#2A1A00")),
-    ("High Contrast", "high_contrast", _variant(DARK, "#000000", "#000000", "#FFFFFF", "#FFFFFF", "#D0D0D0",
-                                                "#FFD400", "#FFE45C", "#000000", "#333333",
-                                                accent_text="#000000", ok="#7CFF7C", warn="#FFE45C",
-                                                err="#FF8080")),
+    ("Basic", "Light", "light", LIGHT),
+    ("Basic", "Dark", "dark", DARK),
+    ("Basic", "High Contrast", "high_contrast", _variant(D, "#000000", "#000000", "#FFFFFF", "#FFFFFF", "#D0D0D0",
+                                                          "#FFD400", "#FFE45C", "#000000", "#333333",
+                                                          accent_text="#000000", ok="#7CFF7C", warn="#FFE45C",
+                                                          err="#FF8080")),
+
+    # ---- Space (this app's own) ----
+    ("Space", "Mars Day", "mars_day", _variant(L, "#F6EEE6", "#FFFBF7", "#E8D6C6", "#3B2418", "#8A6A58",
+                                               "#C2410C", "#9A3412", "#FFFFFF", "#F0E2D6")),
+    ("Space", "Red Planet", "red_planet", _variant(D, "#1C1210", "#271916", "#3D2620", "#F3E3DC", "#B89A8E",
+                                                   "#E2582B", "#F07A4F", "#1F1412", "#35221D")),
+    ("Space", "Martian Dusk", "martian_dusk", _variant(D, "#17161D", "#201F28", "#34323F", "#ECE4DC", "#A8A1A6",
+                                                       "#6FA8DC", "#9CC4EA", "#141319", "#2B2935",
+                                                       accent_text="#0B1622")),
+    ("Space", "Deep Space", "deep_space", _variant(D, "#0B1020", "#121A2E", "#22304D", "#E1E7F5", "#8D9AB8",
+                                                   "#4F7CFF", "#7A9CFF", "#0E1527", "#1C2742")),
+    ("Space", "Nebula", "nebula", _variant(D, "#151022", "#1E1730", "#342850", "#ECE6F8", "#A699C2",
+                                           "#A855F7", "#C084FC", "#18122A", "#2A2140")),
+    ("Space", "Aurora", "aurora", _variant(D, "#0C1716", "#13211F", "#22383A", "#DDF2EE", "#8EB3AD",
+                                           "#14B8A6", "#2DD4BF", "#0F1C1B", "#1C302D", accent_text="#04201C")),
+    ("Space", "Starlight", "starlight", _variant(D, "#050608", "#0E1014", "#1E222A", "#F1F3F6", "#8C94A3",
+                                                 "#38BDF8", "#7DD3FC", "#08090C", "#181B22", accent_text="#031722")),
+    ("Space", "Solar Flare", "solar_flare", _variant(D, "#17130A", "#211B0F", "#3A301A", "#F6EEDB", "#B8A57E",
+                                                     "#F59E0B", "#FBBF24", "#1B160C", "#2F2715",
+                                                     accent_text="#2A1A00")),
+    ("Space", "Eclipse", "eclipse", _variant(D, "#030303", "#0C0B0A", "#2A2520", "#F2EEE9", "#A39C94",
+                                             "#FF8A3D", "#FFA866", "#070606", "#1E1B18", accent_text="#1F0E00")),
+    ("Space", "Supernova", "supernova", _variant(D, "#12081A", "#1C0F27", "#3A1F4D", "#F7E8FF", "#B9A0C9",
+                                                 "#EC4899", "#F472B6", "#0E0614", "#2A1638")),
+    ("Space", "Neptune", "neptune", _variant(D, "#06142B", "#0B1E3D", "#1A3561", "#DCE8FF", "#8EA6CF",
+                                             "#3B82F6", "#60A5FA", "#051026", "#142B52")),
+    ("Space", "Jupiter Storm", "jupiter_storm", _variant(D, "#1A130E", "#251B14", "#423024", "#F4E6D8",
+                                                         "#B8A08A", "#D97B45", "#E89A6C", "#150F0B", "#33251B",
+                                                         accent_text="#1F0F05")),
+    ("Space", "Titan Haze", "titan_haze", _variant(D, "#1B1608", "#262010", "#43391D", "#F3E9CC", "#B5A77E",
+                                                   "#D4A017", "#E8B93A", "#161206", "#352C15",
+                                                   accent_text="#1F1700")),
+    ("Space", "Comet", "comet", _variant(D, "#0A1418", "#102027", "#1F3A45", "#E0F4F8", "#8AAFB9",
+                                         "#22D3EE", "#67E8F9", "#071014", "#18303A", accent_text="#042027")),
+    ("Space", "Milky Way", "milky_way", _variant(D, "#100F1C", "#181728", "#2D2B47", "#EEEDFB", "#A3A1C4",
+                                                 "#8B8CF8", "#A9AAFB", "#0C0B16", "#24223A",
+                                                 accent_text="#0E0D24")),
+    ("Space", "Earthrise", "earthrise", _variant(D, "#0B0F14", "#121922", "#233041", "#E3EBF3", "#8F9DAE",
+                                                 "#278A5F", "#2F9E6E", "#080B0F", "#1B2532")),
+    ("Space", "Lunar", "lunar", _variant(L, "#ECEDEF", "#F8F8F9", "#D5D7DB", "#202226", "#686C74",
+                                         "#4B5563", "#374151", "#FFFFFF", "#E1E3E6")),
+    ("Space", "Ice Moon", "ice_moon", _variant(L, "#EEF5FA", "#FAFDFF", "#D3E3EE", "#14283A", "#5C7489",
+                                               "#0284C7", "#0369A1", "#FFFFFF", "#DDEBF5")),
+    ("Space", "Europa", "europa", _variant(L, "#EDF6F5", "#FAFEFD", "#CFE3E0", "#12302C", "#557571",
+                                           "#0F8C7E", "#0B6E63", "#FFFFFF", "#DCEDEA")),
+    ("Space", "Venus", "venus", _variant(L, "#FBF5E4", "#FFFCF2", "#EADFBF", "#3A3016", "#7E7150",
+                                         "#B7791F", "#975A16", "#FFFFFF", "#F3EACD")),
+    ("Space", "Saturn Rings", "saturn_rings", _variant(L, "#F7F1E6", "#FFFCF6", "#E5D9C3", "#352B1D", "#7C6E58",
+                                                       "#A0703A", "#80592C", "#FFFFFF", "#EFE5D3")),
+    ("Space", "Pluto", "pluto", _variant(L, "#F5F0EF", "#FDFAF9", "#E3D8D6", "#2F2524", "#776765",
+                                         "#B4566A", "#944457", "#FFFFFF", "#EDE3E1")),
+    ("Space", "Cosmic Latte", "cosmic_latte", _variant(L, "#FFF8E7", "#FFFDF6", "#EDE2C8", "#33291A", "#7A6C55",
+                                                       "#8B5E34", "#6E4A28", "#FFFFFF", "#F5ECD6")),
+
+    # ---- Classic dark (open-source editor color schemes) ----
+    ("Classic dark", "Nord", "nord", _variant(D, "#2E3440", "#3B4252", "#4C566A", "#ECEFF4", "#AEB7C8",
+                                              "#88C0D0", "#8FBCBB", "#292E39", "#434C5E", accent_text="#2E3440")),
+    ("Classic dark", "Dracula", "dracula", _variant(D, "#21222C", "#282A36", "#44475A", "#F8F8F2", "#A4ADD3",
+                                                    "#BD93F9", "#FF79C6", "#1B1C24", "#44475A",
+                                                    accent_text="#282A36")),
+    ("Classic dark", "Solarized Dark", "solarized_dark", _variant(D, "#002B36", "#073642", "#0E4B59", "#EEE8D5",
+                                                                  "#93A1A1", "#268BD2", "#2AA198", "#00222B",
+                                                                  "#0B4250")),
+    ("Classic dark", "Gruvbox Dark", "gruvbox_dark", _variant(D, "#1D2021", "#282828", "#504945", "#EBDBB2",
+                                                              "#A89984", "#FABD2F", "#FE8019", "#1A1C1D",
+                                                              "#3C3836", accent_text="#282828")),
+    ("Classic dark", "One Dark", "one_dark", _variant(D, "#21252B", "#282C34", "#3E4451", "#ABB2BF", "#8B919C",
+                                                      "#61AFEF", "#8AC4F5", "#1E2227", "#2C313A",
+                                                      accent_text="#1E2227")),
+    ("Classic dark", "Tokyo Night", "tokyo_night", _variant(D, "#16161E", "#1A1B26", "#292E42", "#C0CAF5",
+                                                            "#9AA5CE", "#7AA2F7", "#9ABDF5", "#13131A",
+                                                            "#292E42", accent_text="#16161E")),
+    ("Classic dark", "Catppuccin Mocha", "catppuccin_mocha", _variant(D, "#181825", "#1E1E2E", "#313244", "#CDD6F4",
+                                                                      "#A6ADC8", "#CBA6F7", "#B4BEFE", "#11111B",
+                                                                      "#313244", accent_text="#1E1E2E")),
+    ("Classic dark", "Catppuccin Macchiato", "catppuccin_macchiato",
+     _variant(D, "#1E2030", "#24273A", "#363A4F", "#CAD3F5", "#A5ADCB", "#C6A0F6", "#B7BDF8", "#181926", "#363A4F",
+              accent_text="#24273A")),
+    ("Classic dark", "Catppuccin Frappé", "catppuccin_frappe",
+     _variant(D, "#292C3C", "#303446", "#414559", "#C6D0F5", "#A5ADCE", "#CA9EE6", "#BABBF1", "#232634", "#414559",
+              accent_text="#303446")),
+    ("Classic dark", "Rosé Pine", "rose_pine", _variant(D, "#191724", "#1F1D2E", "#26233A", "#E0DEF4", "#908CAA",
+                                                        "#C4A7E7", "#EBBCBA", "#16141F", "#26233A",
+                                                        accent_text="#191724")),
+    ("Classic dark", "Rosé Pine Moon", "rose_pine_moon", _variant(D, "#232136", "#2A273F", "#393552", "#E0DEF4",
+                                                                  "#908CAA", "#C4A7E7", "#EA9A97", "#1F1D30",
+                                                                  "#393552", accent_text="#232136")),
+    ("Classic dark", "Everforest Dark", "everforest_dark", _variant(D, "#272E33", "#2D353B", "#475258", "#D3C6AA",
+                                                                    "#9DA9A0", "#A7C080", "#83C092", "#232A2E",
+                                                                    "#3D484D", accent_text="#2D353B")),
+    ("Classic dark", "Kanagawa", "kanagawa", _variant(D, "#16161D", "#1F1F28", "#363646", "#DCD7BA", "#A6A69C",
+                                                      "#7E9CD8", "#7FB4CA", "#13131A", "#2A2A37",
+                                                      accent_text="#16161D")),
+    ("Classic dark", "Ayu Dark", "ayu_dark", _variant(D, "#0B0E14", "#11151C", "#252A33", "#BFBDB6", "#8A8F98",
+                                                      "#E6B450", "#FFB454", "#080A0F", "#1E232B",
+                                                      accent_text="#0B0E14")),
+    ("Classic dark", "Ayu Mirage", "ayu_mirage", _variant(D, "#1F2430", "#242936", "#343B4C", "#CCCAC2", "#9DA2AC",
+                                                          "#FFCC66", "#FFD580", "#1A1F29", "#2D3343",
+                                                          accent_text="#1F2430")),
+    ("Classic dark", "Palenight", "palenight", _variant(D, "#232635", "#292D3E", "#3A3F58", "#C8CCE6", "#959DCB",
+                                                        "#C792EA", "#82AAFF", "#1E2130", "#34324A",
+                                                        accent_text="#1E2130")),
+    ("Classic dark", "Night Owl", "night_owl", _variant(D, "#011627", "#0B2942", "#1D3B53", "#D6DEEB", "#8FAABF",
+                                                        "#82AAFF", "#C792EA", "#01111D", "#13344F",
+                                                        accent_text="#011627")),
+    ("Classic dark", "Cobalt2", "cobalt2", _variant(D, "#15232D", "#193549", "#2A5A7A", "#FFFFFF", "#A7C0D2",
+                                                    "#FFC600", "#FFD84D", "#122738", "#234E6D",
+                                                    accent_text="#193549")),
+    ("Classic dark", "Synthwave '84", "synthwave84", _variant(D, "#1E1A2B", "#262335", "#463465", "#F4EEFF",
+                                                              "#B6A8D2", "#FF7EDB", "#F97E72", "#1A1626",
+                                                              "#34294F", accent_text="#241B2F")),
+    ("Classic dark", "Tomorrow Night", "tomorrow_night", _variant(D, "#1D1F21", "#282A2E", "#373B41", "#C5C8C6",
+                                                                  "#969896", "#81A2BE", "#B294BB", "#161719",
+                                                                  "#373B41", accent_text="#1D1F21")),
+    ("Classic dark", "Monokai", "monokai", _variant(D, "#1E1F1C", "#272822", "#49483E", "#F8F8F2", "#A59F85",
+                                                    "#A6E22E", "#E6DB74", "#1A1B17", "#3E3D32",
+                                                    accent_text="#272822")),
+    ("Classic dark", "Zenburn", "zenburn", _variant(D, "#383838", "#3F3F3F", "#5B5B5B", "#DCDCCC", "#A8A897",
+                                                    "#8CD0D3", "#93E0E3", "#313131", "#4F4F4F",
+                                                    accent_text="#2B2B2B")),
+
+    # ---- Classic light ----
+    ("Classic light", "Nord Light", "nord_light", _variant(L, "#E5E9F0", "#ECEFF4", "#D8DEE9", "#2E3440",
+                                                           "#4C566A", "#5E81AC", "#4C6A93", "#FFFFFF", "#D8DEE9")),
+    ("Classic light", "Solarized Light", "solarized_light", _variant(L, "#EEE8D5", "#FDF6E3", "#DDD6C1", "#3B4D54",
+                                                                     "#657B83", "#268BD2", "#1F6FA8", "#FFFBEF",
+                                                                     "#E4DDC8")),
+    ("Classic light", "Gruvbox Light", "gruvbox_light", _variant(L, "#F2E5BC", "#FBF1C7", "#D5C4A1", "#3C3836",
+                                                                 "#7C6F64", "#AF3A03", "#8F3002", "#FFFAE3",
+                                                                 "#EBDBB2")),
+    ("Classic light", "One Light", "one_light", _variant(L, "#EAEAEB", "#FAFAFA", "#D4D4D6", "#383A42", "#696C77",
+                                                         "#4078F2", "#2F5FD0", "#FFFFFF", "#E0E0E2")),
+    ("Classic light", "Catppuccin Latte", "catppuccin_latte", _variant(L, "#E6E9EF", "#EFF1F5", "#CCD0DA",
+                                                                       "#4C4F69", "#6C6F85", "#8839EF", "#7028D4",
+                                                                       "#FFFFFF", "#DCE0E8")),
+    ("Classic light", "Rosé Pine Dawn", "rose_pine_dawn", _variant(L, "#FAF4ED", "#FFFAF3", "#DFDAD9", "#575279",
+                                                                   "#797593", "#907AA9", "#286983", "#FFFFFF",
+                                                                   "#F2E9E1")),
+    ("Classic light", "Everforest Light", "everforest_light", _variant(L, "#EFEBD4", "#FDF6E3", "#DDD8BE",
+                                                                       "#3A454B", "#5F6B63", "#6F8A0B", "#5A7008",
+                                                                       "#FFFBEF", "#E6E2CC")),
+    ("Classic light", "Tokyo Night Day", "tokyo_night_day", _variant(L, "#D5D6DB", "#E1E2E7", "#C4C8DA", "#1F3B80",
+                                                                     "#4F5E96", "#2E7DE9", "#1D63C7", "#F2F3F6",
+                                                                     "#CBCDD6")),
+    ("Classic light", "Kanagawa Lotus", "kanagawa_lotus", _variant(L, "#E5DDB0", "#F2ECBC", "#D5CEA3", "#3C3C4E",
+                                                                   "#625F52", "#4D699B", "#3B5481", "#FAF6D6",
+                                                                   "#E7DBA0")),
+    ("Classic light", "Ayu Light", "ayu_light", _variant(L, "#F0F1F2", "#FCFCFC", "#DCDEE1", "#4C5157", "#787B80",
+                                                         "#C86A14", "#A85710", "#FFFFFF", "#E7E8E9")),
+    ("Classic light", "Tomorrow", "tomorrow", _variant(L, "#EFEFEF", "#FFFFFF", "#D6D6D6", "#4D4D4C", "#7A7A78",
+                                                       "#4271AE", "#345A8B", "#FFFFFF", "#E6E6E6")),
+    ("Classic light", "Paper", "paper", _variant(L, "#F5F3EE", "#FFFEFB", "#E0DCD2", "#2B2A27", "#6E6A62",
+                                                 "#3D5A80", "#2C4460", "#FFFFFF", "#EAE6DD")),
+    ("Classic light", "Sepia", "sepia", _variant(L, "#EFE3CC", "#F8EFDC", "#DDCCAB", "#4A3B28", "#7A6A52",
+                                                 "#8A5A2B", "#6E4721", "#FFF8E8", "#E7D8BB")),
 ]
-THEME_COLORS = {key: colors for _, key, colors in THEMES}
+THEME_COLORS = {key: colors for _, _, key, colors in THEMES}
+THEME_GROUPS = ("Space", "Classic dark", "Classic light")
 
 
 def system_is_dark(app: QApplication) -> bool:
@@ -213,7 +356,12 @@ def app_icon_path() -> str | None:
     return None
 
 
-def _check_icon() -> str:
+def _is_light(color: str) -> bool:
+    c = QColor(color)
+    return 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue() > 150
+
+
+def _check_icon(dark: bool = False) -> str:
     """Path to the white tick SVG for checkbox indicators (Qt style sheets need a file). It ships with the
     code, so nothing is written at run time."""
     old = os.path.join(tempfile.gettempdir(), "rover_scraper_check.svg")    # written by earlier versions
@@ -224,7 +372,7 @@ def _check_icon() -> str:
             pass
     # In the packaged app, data files live in the bundle's folder (sys._MEIPASS), not next to the code.
     here = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(here, "check.svg").replace("\\", "/")
+    return os.path.join(here, "check_dark.svg" if dark else "check.svg").replace("\\", "/")
 
 
 def apply_theme(app: QApplication, t: dict) -> None:
@@ -302,7 +450,7 @@ def apply_theme(app: QApplication, t: dict) -> None:
                                background: {t['input']}; }}
         QCheckBox::indicator:hover {{ border-color: {t['accent']}; }}
         QCheckBox::indicator:checked {{ background: {t['accent']}; border-color: {t['accent']};
-                                       image: url({_check_icon()}); }}
+                                       image: url({_check_icon(_is_light(t['accent_text']))}); }}
         QCheckBox::indicator:disabled {{ background: {t['track']}; border-color: {t['border']}; }}
         QCheckBox::indicator:checked:disabled {{ background: {t['muted']}; border-color: {t['muted']}; }}
     """)
@@ -1389,9 +1537,10 @@ class MainWindow(QMainWindow):
         self.act_retry.setToolTip("Photos NASA refused (HTTP 403/404) are normally skipped on later runs. "
                                   "Tick this to try them all again on the next run.")
 
-        self._choice_menu(view_m, "Theme", [("Match operating system", "system")]
-                          + [(name, key) for name, key, _ in THEMES],
-                          "theme", after=self._apply_theme)
+        theme_options = [("Match operating system", "system")]
+        theme_options += [(name, key) for group, name, key, _ in THEMES if group == "Basic"]
+        theme_options += [(g, [(name, key) for group, name, key, _ in THEMES if group == g]) for g in THEME_GROUPS]
+        self._choice_menu(view_m, "Theme", theme_options, "theme", after=self._apply_theme)
         units_m = view_m.addMenu("Units")
         self._choice_menu(units_m, "Data", [("Auto", "auto"), ("KB", "KB"), ("MB", "MB"), ("GB", "GB"),
                                             ("TB", "TB")], "data_unit")
@@ -1437,8 +1586,15 @@ class MainWindow(QMainWindow):
         menu = parent.addMenu(title)
         group = QActionGroup(menu)
         group.setExclusive(True)
-        for text, value in options:
-            act = menu.addAction(text)
+        flat = []
+        for text, value in options:          # a list as the value is a submenu of more choices
+            if isinstance(value, list):
+                sub = menu.addMenu(text)
+                flat += [(sub, t, v) for t, v in value]
+            else:
+                flat.append((menu, text, value))
+        for where, text, value in flat:
+            act = where.addAction(text)
             act.setCheckable(True)
             act.setChecked(getattr(self.settings, attr) == value)
             group.addAction(act)
