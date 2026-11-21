@@ -1,0 +1,2 @@
+# Extra packages needed only to build the standalone .exe (on top of requirements.txt).
+pyinstaller==6.22.3

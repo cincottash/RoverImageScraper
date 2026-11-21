@@ -27,10 +27,16 @@ folder tree. Run it again later and it downloads only what's new or missing.
 The layout is `<dest>/<Rover>/<sol>/<CAMERA>/<n>`. A *sol* is a Mars day counted from landing, and files are
 numbered 0, 1, 2… within each camera folder. Files have no extension, but they are ordinary JPEG images.
 
-## Setup
+## Download (Windows)
 
-The desktop app can be built as a standalone Windows program that needs no Python: see
-[Standalone app](#standalone-app-windows). The steps below run it from the source code.
+The easiest way to run it: download **RoverImageScraper.exe** from the
+[latest release](https://github.com/cincottash/RoverImageScraper/releases/latest) and double-click it. It needs no
+Python and installs nothing. On first run it asks where to keep its files and photos. You'll need a free Mars Vista
+API key (see step 3 below). More details: [Standalone app](#standalone-app-windows).
+
+## Setup (from the source code)
+
+These steps run the program from the source code: needed for the command line, or on macOS and Linux.
 
 1. Install **Python 3.10 or newer**.
 2. Clone the repo and create a virtual environment:
@@ -185,8 +191,8 @@ To run from any other folder, use full paths to both `python.exe` (inside `.venv
 
 ## Standalone app (Windows)
 
-The desktop app can be packaged with [PyInstaller](https://pyinstaller.org) into a single `RoverImageScraper.exe`
-of about 35 MB. It carries its own private copy of Python and the libraries, so it runs on a Windows PC without
+The desktop app is packaged with [PyInstaller](https://pyinstaller.org) into a single `RoverImageScraper.exe` of
+about 35 MB, attached to each [release](https://github.com/cincottash/RoverImageScraper/releases). It carries its own private copy of Python and the libraries, so it runs on a Windows PC without
 Python and needs nothing downloaded to start. Each time it starts it unpacks itself into Windows' temporary
 folder (about 90 MB); that copy is removed when it closes. On first run it asks where to keep its files (see
 above).
@@ -194,16 +200,31 @@ above).
 Windows may show *"Windows protected your PC"* the first time, because the program isn't code-signed. Click
 *More info*, then *Run anyway*.
 
-To build it, use a separate virtual environment with the requirements and PyInstaller, then run the build script.
-Each build goes into a new dated subfolder of `--out`, which ends up holding only the `.exe`:
+The standalone app is the desktop app only; the command line runs from the source code as described above.
+
+### Building the .exe yourself
+
+You need Windows and Python 3.10. Use a separate virtual environment with the app's requirements plus the pinned
+build tools (`packaging/requirements-build.txt`), then run the build script. Each build goes into a new dated
+subfolder of `--out`, which ends up holding only the `.exe`:
 
 ```bat
 py -3.10 -m venv build-venv
-build-venv\Scripts\pip install -r requirements.txt pyinstaller
+build-venv\Scripts\pip install -r requirements.txt -r packaging\requirements-build.txt
 build-venv\Scripts\python packaging\build_exe.py --out C:\path\to\builds
 ```
 
-The standalone app is the desktop app only; the command line runs from the source code as described above.
+### Releases (automatic builds)
+
+`.github/workflows/build-exe.yml` builds the `.exe` on GitHub's Windows machines:
+
+- On every pull request, it builds the `.exe`, checks that it starts, and keeps it for 14 days as a download on
+  the run's page (*Actions* tab), so changes can be tried before merging. Nothing is published.
+- When a version tag is pushed, it also publishes a release with the `.exe` attached:
+  ```bat
+  git tag v1.0.0
+  git push origin v1.0.0
+  ```
 
 ## Code layout
 
@@ -223,4 +244,8 @@ All code is in `rover_scraper/`:
 - `settings.py`: the desktop app's saved settings.
 - `check.svg`: the tick drawn in checkboxes.
 
-`packaging/build_exe.py` builds the standalone `.exe`.
+Building the standalone app:
+
+- `packaging/build_exe.py`: builds `RoverImageScraper.exe`.
+- `packaging/requirements-build.txt`: the build tools (PyInstaller), pinned.
+- `.github/workflows/build-exe.yml`: builds it on GitHub for pull requests and releases.
