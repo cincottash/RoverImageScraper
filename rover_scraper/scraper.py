@@ -267,7 +267,7 @@ class Scraper:
                     report.already_present += 1
                     self.detail(f"     {where}: {photo.url.rsplit('/', 1)[-1]} is already here (same bytes)")
                     continue
-                name = f"{index}{file_extension(photo.url, result)}"
+                name = f"{index}{file_extension(result)}"
                 save_new_file(os.path.join(plan.folder, name), result)
                 self.detail(f"     {where}/{name}: saved {len(result) / 1024:,.0f} KB "
                             f"({photo.url.rsplit('/', 1)[-1]})")

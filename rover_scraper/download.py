@@ -100,17 +100,10 @@ def sniff_extension(head: bytes) -> str:
     return ""
 
 
-def file_extension(url: str, data: bytes) -> str:
-    """Extension to save a photo with: its type from its bytes, else the one in its URL, else none."""
-    ext = sniff_extension(data[:16])
-    if ext:
-        return ext
-    name = url.split("?", 1)[0].rsplit("/", 1)[-1]
-    if "." in name:
-        ext = name.rsplit(".", 1)[1].lower()
-        if 1 <= len(ext) <= 5 and ext.isalnum():
-            return "." + ext
-    return ""
+def file_extension(data: bytes) -> str:
+    """Extension to save a photo with, read from its bytes only (never guessed from its name or URL).
+    "" when the type isn't recognized: the file is then saved as plain <n>, which still counts as a photo."""
+    return sniff_extension(data[:16])
 
 
 def save_new_file(path: str, data: bytes) -> None:

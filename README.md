@@ -136,9 +136,10 @@ Then:
 ```
 
 The layout is `<photo folder>/<Rover>/<sol>/<CAMERA>/<n>.<type>`. Within each camera folder, photos are numbered
-0, 1, 2… in the order the source lists them, and each file keeps its own type (almost always `.jpg`), so your file
-manager can show previews. Files named just `<n>` with no extension, as older versions saved them, are recognized
-too; they count toward a folder's total and are never renamed by the app.
+0, 1, 2… in the order the source lists them. The extension (almost always `.jpg`) comes from the file's own
+contents, never guessed from its name or web address, so your file manager can show previews. A file whose type
+isn't recognized is saved as just `<n>`. Files named just `<n>`, as older versions saved them, count toward a
+folder's total too, and the app never renames them.
 
 ## How it decides what to download
 
