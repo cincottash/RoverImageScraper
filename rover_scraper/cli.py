@@ -1,4 +1,4 @@
-"""Command line: python main.py <dest> [--rovers ...] [--sol-min N] [--sol-max N] [--dry-run] [--allow-existing]"""
+"""Command line: python rover_scraper/main.py <dest> [--rovers ...] [--sol-min N] [--sol-max N] [--dry-run] [--allow-existing]"""
 from __future__ import annotations
 
 import argparse
@@ -6,9 +6,9 @@ import json
 import os
 import sys
 
-from .api import VERIFIED_ROVERS, ApiError, MarsVistaClient, load_api_key
-from .scraper import Report, Scraper
-from .state import Unavailable, default_state_dir
+from api import VERIFIED_ROVERS, ApiError, MarsVistaClient, load_api_key
+from scraper import Report, Scraper
+from state import Unavailable, default_state_dir
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

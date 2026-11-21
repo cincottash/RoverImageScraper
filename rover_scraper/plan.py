@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass
 from enum import Enum
 
-from .api import Photo
+from api import Photo
 
 
 class Action(str, Enum):
