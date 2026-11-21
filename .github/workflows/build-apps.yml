@@ -1,9 +1,10 @@
 # Builds the desktop app for Windows (RoverImageScraper.exe) and Linux (RoverImageScraper-x86_64.AppImage).
 #
-# - Pull requests, merges into main, and manual runs: build both, check that each starts, and keep them as
-#   downloadable artifacts of the run for 14 days (nothing is published).
-# - A pushed version tag (for example v1.1.0): also publish a GitHub Release with both files attached.
-#   To make a release:   git tag v1.1.0   then   git push origin v1.1.0
+# - Pull requests and manual runs: build both, check that each starts, and keep them as downloadable artifacts of
+#   the run for 14 days (nothing is published).
+# - Every merge into main: the same, then publish a GitHub Release with both files attached, tagged with the next
+#   version (v1.1.1 -> v1.1.2). Put [minor] or [major] in the PR title for v1.2.0 or v2.0.0 instead.
+# - A version tag pushed by hand (git tag v1.5.0; git push origin v1.5.0) also publishes a release.
 
 name: Build apps
 
@@ -127,10 +128,40 @@ jobs:
 
   release:
     name: Publish release
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Every merge into main, and any v* tag pushed by hand. Pull requests and manual runs don't publish.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: [windows, linux]
     runs-on: ubuntu-latest
+    concurrency:
+      group: publish-release      # one at a time, so two quick merges never pick the same version
+      cancel-in-progress: false
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # all tags, to find the latest version
+
+      - name: Work out the version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="$GITHUB_REF_NAME"                       # a tag pushed by hand: use it as is
+          else
+            latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
+            latest=${latest:-v0.0.0}
+            IFS=. read -r major minor patch <<< "${latest#v}"
+            message=$(git log -1 --format=%B "$GITHUB_SHA")   # the merged PR's title and description
+            if grep -qi '\[major\]' <<< "$message"; then
+              version="v$((major + 1)).0.0"
+            elif grep -qi '\[minor\]' <<< "$message"; then
+              version="v${major}.$((minor + 1)).0"
+            else
+              version="v${major}.${minor}.$((patch + 1))"
+            fi
+            echo "Latest release tag: $latest"
+          fi
+          echo "Publishing $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -139,8 +170,9 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           ls -l dist
-          gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" \
-            --title "Rover Image Scraper ${{ github.ref_name }}" --generate-notes \
-            dist/RoverImageScraper.exe dist/RoverImageScraper-x86_64.AppImage
+          # For a merge this also creates the tag on the merged commit (a tag made this way doesn't start
+          # another run).
+          gh release create "$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"             --title "Rover Image Scraper $VERSION" --generate-notes             dist/RoverImageScraper.exe dist/RoverImageScraper-x86_64.AppImage
