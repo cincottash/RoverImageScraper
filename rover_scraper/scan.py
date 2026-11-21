@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Callable
 
 from api import Cancelled, MarsVistaClient
+from plan import is_photo_file
 from scraper import Report, Scraper
 from state import Unavailable
 
@@ -58,7 +59,7 @@ def disk_summary(dest: str, rover: str, progress: Callable[[dict], None] | None 
             if not cam.is_dir():
                 continue
             for f in os.scandir(cam.path):
-                if f.name.isdigit() and f.is_file():
+                if is_photo_file(f):
                     photos += 1
                     size += f.stat().st_size
         if progress and (i % 50 == 0 or i == len(sol_names)):

@@ -1005,7 +1005,7 @@ class MainWindow(QMainWindow):
                 "Photo rate": "Photos saved per second over the same window as Speed.",
                 "Already had": "Photos that were already in the folder: in sols that were already complete, or "
                                "found while filling in a sol.",
-                "Unavailable at NASA": "Photos NASA's image servers refuse to send (HTTP 403/404), usually older images NASA no longer serves. They can't be downloaded, so they're remembered and skipped on later runs instead of counting as missing. File > Settings > Retry photos NASA refused tries them all again.",
+                "Unavailable at NASA": "Photos NASA's image servers refuse to send (HTTP 403/404), usually older images NASA no longer serves. They can't be downloaded, so they're remembered and skipped on later runs instead of counting as missing. Download > Retry photos NASA refused tries them all again.",
                 "Time left": "Estimated from how fast sols went by over the last two minutes, so it changes when "
                              "the download moves from sols you already have to new ones."}
         for name, r, c in items:
@@ -1354,6 +1354,7 @@ class MainWindow(QMainWindow):
     def _build_menus(self) -> None:
         mb = self.menuBar()
         file_m = mb.addMenu("&File")
+        download_m = mb.addMenu("&Download")
         view_m = mb.addMenu("&View")
         help_m = mb.addMenu("&Help")
 
@@ -1369,16 +1370,36 @@ class MainWindow(QMainWindow):
         quit_act.setShortcut(QKeySequence("Ctrl+Q"))
         quit_act.triggered.connect(self.close)
 
-        self._choice_menu(view_m, "Data units", [("Auto", "auto"), ("KB", "KB"), ("MB", "MB"), ("GB", "GB"),
-                                                 ("TB", "TB")], "data_unit")
-        self._choice_menu(view_m, "Speed units", [("Auto", "auto"), ("KB/s", "KB/s"), ("MB/s", "MB/s"),
-                                                  ("Mbit/s", "Mbit/s")], "speed_unit")
-        self._choice_menu(view_m, "Speed averaged over", [(f"{n} seconds", n) for n in SPEED_WINDOWS],
-                          "speed_window")
-        view_m.addSeparator()
+        # Download: the same actions as the buttons, enabled whenever their button is
+        download_m.setToolTipsVisible(True)
+        self.button_actions = []
+        for item in ((self.start_btn, "Start"), (self.pause_btn, "Pause"), (self.stop_btn, "Stop"), None,
+                     (self.quick_btn, "Quick scan"), (self.full_btn, "Full check…"), (self.preview_btn, "Preview")):
+            if item is None:
+                download_m.addSeparator()
+                continue
+            button, text = item
+            act = download_m.addAction(text)
+            act.triggered.connect(button.click)
+            self.button_actions.append((act, button))
+        download_m.aboutToShow.connect(self._sync_button_actions)
+        download_m.addSeparator()
+        self.act_retry = download_m.addAction("Retry photos NASA refused (next run)")
+        self.act_retry.setCheckable(True)
+        self.act_retry.setToolTip("Photos NASA refused (HTTP 403/404) are normally skipped on later runs. "
+                                  "Tick this to try them all again on the next run.")
+
         self._choice_menu(view_m, "Theme", [("Match operating system", "system")]
                           + [(name, key) for name, key, _ in THEMES],
                           "theme", after=self._apply_theme)
+        units_m = view_m.addMenu("Units")
+        self._choice_menu(units_m, "Data", [("Auto", "auto"), ("KB", "KB"), ("MB", "MB"), ("GB", "GB"),
+                                            ("TB", "TB")], "data_unit")
+        self._choice_menu(units_m, "Speed", [("Auto", "auto"), ("KB/s", "KB/s"), ("MB/s", "MB/s"),
+                                             ("Mbit/s", "Mbit/s")], "speed_unit")
+        self._choice_menu(units_m, "Speed averaged over", [(f"{n} seconds", n) for n in SPEED_WINDOWS],
+                          "speed_window")
+        view_m.addSeparator()
         self.act_log = view_m.addAction("Show activity log")
         self.act_log.setCheckable(True)
         self.act_log.setChecked(self.settings.show_log)
@@ -1391,13 +1412,6 @@ class MainWindow(QMainWindow):
         view_m.addSeparator()
         view_m.addAction("Reset view options").triggered.connect(self._reset_view)
 
-        settings_m.setToolTipsVisible(True)
-        self.act_retry = settings_m.addAction("Retry photos NASA refused (next run)")
-        self.act_retry.setCheckable(True)
-        self.act_retry.setToolTip("Photos NASA refused (HTTP 403/404) are normally skipped on later runs. "
-                                  "Tick this to try them all again on the next run.")
-        folder_act = settings_m.addAction("Open app data folder")
-        folder_act.triggered.connect(self._open_settings_folder)
         self.act_move_data = settings_m.addAction("Change app data folder…")
         self.act_move_data.triggered.connect(self._change_data_folder)
         settings_m.addSeparator()
@@ -1405,8 +1419,18 @@ class MainWindow(QMainWindow):
 
         site = help_m.addAction("Mars Vista website")
         site.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://marsvista.dev")))
+        help_m.addAction("Open app data folder").triggered.connect(self._open_settings_folder)
+        help_m.addAction("Report a problem").triggered.connect(lambda: QDesktopServices.openUrl(
+            QUrl("https://github.com/cincottash/RoverImageScraper/issues")))
+        help_m.addSeparator()
         about = help_m.addAction("About Rover Image Scraper")
         about.triggered.connect(self._about)
+
+    def _sync_button_actions(self) -> None:
+        """Download menu items follow their buttons (enabled state, and Start/Resume wording)."""
+        for act, button in self.button_actions:
+            act.setEnabled(button.isEnabled() and button.isVisible())
+            act.setText(button.text().replace("▶", "").strip())
 
     def _choice_menu(self, parent, title: str, options: list, attr: str, after=None) -> None:
         """A submenu of mutually exclusive choices stored in self.settings.<attr>."""
@@ -1511,7 +1535,7 @@ class MainWindow(QMainWindow):
                           "adding only what's missing. Curiosity and Perseverance come from the Mars Vista API; "
                           "Spirit and Opportunity from NASA's Planetary Data System archive.<br><br>"
                           'Photos: NASA/JPL-Caltech. Data: <a href="https://marsvista.dev">Mars Vista</a>.<br><br>'
-                          'Free software under the <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU General '
+                          'Copyright © 2026 cincottash. Free software under the <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU General '
                           'Public License v3</a>. Source: '
                           '<a href="https://github.com/cincottash/RoverImageScraper">github.com/cincottash/'
                           'RoverImageScraper</a>.')
@@ -1686,7 +1710,7 @@ class MainWindow(QMainWindow):
         retry_refused = self.act_retry.isChecked()
         if retry_refused:
             self.act_retry.setChecked(False)      # one run only
-            self._log("Retrying photos NASA refused before (File > Settings > Retry photos NASA refused).")
+            self._log("Retrying photos NASA refused before (Download > Retry photos NASA refused).")
         self.report = Report()
         report = self.report
         self.summary.setVisible(False)

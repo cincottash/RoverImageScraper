@@ -84,7 +84,7 @@ Then:
     filling in a sol).
   - *Unavailable at NASA*: photos NASA's image servers refuse to send (HTTP 403 or 404), usually older images
     NASA no longer serves. They can't be downloaded, so the app remembers them and skips them on later runs
-    instead of counting them as missing. *File > Settings > Retry photos NASA refused* tries them all again.
+    instead of counting them as missing. *Download > Retry photos NASA refused* tries them all again.
   - *Speed*, *Photo rate* and *Average speed*, *Errors*, *Elapsed*, and *Time left*: an estimate based on how
     fast sols went by over the last two minutes. It can change noticeably when the run moves from sols you
     already have (fast) to new ones (slower, since they're downloaded).
@@ -108,12 +108,15 @@ Then:
 
 ### Menus
 
-- **File:** choose or open the photo folder; **Settings** (retry photos NASA refused, open or move the app data
-  folder, reset the download settings to their defaults); quit.
-- **View:** units for data and speed, how long *Speed* is averaged over, the theme (match the operating system,
-  light, dark, or one of ten space-themed color schemes), show or hide the activity log, the detailed activity
+- **File:** choose or open the photo folder; **Settings** (move the app data folder, reset the download settings
+  to their defaults); quit.
+- **Download:** Start, Pause and Stop, Quick scan, Full check and Preview (the same as the buttons), and *Retry
+  photos NASA refused* on the next run.
+- **View:** the theme (match the operating system, light, dark, or one of ten space-themed color schemes), units
+  for data and speed and how long *Speed* is averaged over, show or hide the activity log, the detailed activity
   log, and *Reset view options*.
-- **Help:** the Mars Vista website, and *About*.
+- **Help:** the Mars Vista website, open the app data folder, report a problem (opens the project's GitHub
+  issues), and *About*.
 
 ## Where your photos go
 
@@ -122,18 +125,20 @@ Then:
   Curiosity/
     3786/
       MAST/
-        0
-        1
+        0.jpg
+        1.jpg
         ...
       NAVCAM/
-        0
+        0.jpg
         ...
   Perseverance/
     ...
 ```
 
-The layout is `<photo folder>/<Rover>/<sol>/<CAMERA>/<n>`. Within each camera folder, photos are numbered 0, 1,
-2… in the order the source lists them. The files have no extension, but they are ordinary JPEG images.
+The layout is `<photo folder>/<Rover>/<sol>/<CAMERA>/<n>.<type>`. Within each camera folder, photos are numbered
+0, 1, 2… in the order the source lists them, and each file keeps its own type (almost always `.jpg`), so your file
+manager can show previews. Files named just `<n>` with no extension, as older versions saved them, are recognized
+too; they count toward a folder's total and are never renamed by the app.
 
 ## How it decides what to download
 
@@ -303,6 +308,8 @@ Packaging: `packaging/build_exe.py` (Windows), `packaging/build_appimage.py` (Li
 `packaging/icon.svg` (the app icon), and `packaging/requirements-build.txt` (the build tools, pinned).
 
 ## License
+
+Copyright (C) 2026 cincottash
 
 Rover Image Scraper is free software: you can redistribute it and/or modify it under the terms of the
 [GNU General Public License version 3](LICENSE) (GPL-3.0). Anyone may use, copy, modify and share it; if you

@@ -17,7 +17,7 @@ from state import Unavailable, default_state_dir
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Download Mars rover photos (Mars Vista and NASA PDS) into "
-                                            "<dest>/<Rover>/<sol>/<CAMERA>/<n>, adding only what's missing.")
+                                            "<dest>/<Rover>/<sol>/<CAMERA>/<n>.<type>, adding only what's missing.")
     p.add_argument("dest", help="folder to save photos into (must exist)")
     p.add_argument("--rovers", default=",".join(SUPPORTED_ROVERS),
                    help=f"comma-separated rover names (default: {','.join(SUPPORTED_ROVERS)})")

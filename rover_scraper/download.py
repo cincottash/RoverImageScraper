@@ -87,6 +87,32 @@ def make_session(pool_size: int) -> requests.Session:
     return s
 
 
+# File types recognized from a file's first bytes, so the extension matches what's really inside.
+SIGNATURES = ((b"\xff\xd8\xff", ".jpg"), (b"\x89PNG\r\n\x1a\n", ".png"), (b"GIF87a", ".gif"), (b"GIF89a", ".gif"),
+              (b"II*\x00", ".tif"), (b"MM\x00*", ".tif"))
+
+
+def sniff_extension(head: bytes) -> str:
+    """".jpg", ".png", ".gif" or ".tif" from a file's first bytes; "" if it's none of these."""
+    for magic, ext in SIGNATURES:
+        if head.startswith(magic):
+            return ext
+    return ""
+
+
+def file_extension(url: str, data: bytes) -> str:
+    """Extension to save a photo with: its type from its bytes, else the one in its URL, else none."""
+    ext = sniff_extension(data[:16])
+    if ext:
+        return ext
+    name = url.split("?", 1)[0].rsplit("/", 1)[-1]
+    if "." in name:
+        ext = name.rsplit(".", 1)[1].lower()
+        if 1 <= len(ext) <= 5 and ext.isalnum():
+            return "." + ext
+    return ""
+
+
 def save_new_file(path: str, data: bytes) -> None:
     """Write data to path. Raises FileExistsError if path already exists; it never overwrites."""
     if os.path.lexists(path):

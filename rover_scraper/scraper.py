@@ -13,10 +13,10 @@ from typing import Callable, Iterable, Iterator
 import requests
 
 from api import Cancelled, MarsVistaClient, Photo
-from download import fetch_bytes, head_size, make_session, save_new_file
+from download import fetch_bytes, file_extension, head_size, make_session, save_new_file
 from pds import is_pds_rover
-from plan import (Action, CameraPlan, cameras_short, disk_camera_counts, exact_match, last_sol_on_disk,
-                  plan_sol)
+from plan import (Action, CameraPlan, cameras_short, disk_camera_counts, exact_match, is_photo_file,
+                  last_sol_on_disk, plan_sol)
 from state import PERMANENT_STATUSES, Unavailable
 
 
@@ -196,7 +196,7 @@ class Scraper:
         completed as usual. Uses size checks only (no downloads)."""
         if not (is_pds_rover(plan.rover) and plan.action is Action.FILL and plan.existing):
             return False
-        sizes = {e.stat().st_size for e in os.scandir(plan.folder) if e.name.isdigit() and e.is_file()}
+        sizes = {e.stat().st_size for e in os.scandir(plan.folder) if is_photo_file(e)}
         known = False
         results = self._ordered_parallel(self.head, plan.photos)
         try:
@@ -267,8 +267,9 @@ class Scraper:
                     report.already_present += 1
                     self.detail(f"     {where}: {photo.url.rsplit('/', 1)[-1]} is already here (same bytes)")
                     continue
-                save_new_file(os.path.join(plan.folder, str(index)), result)
-                self.detail(f"     {where}/{index}: saved {len(result) / 1024:,.0f} KB "
+                name = f"{index}{file_extension(photo.url, result)}"
+                save_new_file(os.path.join(plan.folder, name), result)
+                self.detail(f"     {where}/{name}: saved {len(result) / 1024:,.0f} KB "
                             f"({photo.url.rsplit('/', 1)[-1]})")
                 index += 1
                 report.downloaded += 1
@@ -286,7 +287,7 @@ class Scraper:
     def _drop_by_size(self, folder: str, photos: list[Photo], report: Report) -> list[Photo]:
         """Cheap first pass for FILL: a listed photo whose remote size (HEAD, no download) equals the size of a
         file already in the folder is taken as present. Only the rest are downloaded and compared by bytes."""
-        sizes = Counter(e.stat().st_size for e in os.scandir(folder) if e.name.isdigit() and e.is_file())
+        sizes = Counter(e.stat().st_size for e in os.scandir(folder) if is_photo_file(e))
         keep = []
         for photo, size in self._ordered_parallel(self.head, photos):
             if isinstance(size, int) and sizes[size] > 0:
@@ -311,7 +312,7 @@ class Scraper:
     def _existing_hashes(folder: str) -> list[str]:
         out = []
         for e in os.scandir(folder):
-            if e.name.isdigit() and e.is_file():
+            if is_photo_file(e):
                 with open(e.path, "rb") as f:
                     out.append(_sha256(f.read()))
         return out
