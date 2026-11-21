@@ -148,7 +148,7 @@ checked, 0 changed, 0 removed. 45 files added (Perseverance only), and a second 
 
 ### Dev setup
 Work on branch `refactor/marsvista`. Use a `.venv` made with Python 3.10 (`py -3.10 -m venv .venv`), then
-`.venv\Scripts\pip install -r requirements-dev.txt`. The API key goes in the `MARSVISTA_API_KEY` environment variable.
+`.venv\Scripts\pip install -r requirements.txt`. The API key goes in the `MARSVISTA_API_KEY` environment variable.
 
 ## Next steps
 1. Get a Mars Vista API key. Read its docs and confirm the endpoints, filters, pagination and rate limits.
