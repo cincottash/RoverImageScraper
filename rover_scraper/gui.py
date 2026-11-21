@@ -8,7 +8,6 @@ responsive, and Stop works like Ctrl+C in the command line: finished photos are 
 from __future__ import annotations
 
 import collections
-import json
 import math
 import os
 import queue
@@ -25,7 +24,8 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBo
                                QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSpinBox, QToolButton,
                                QVBoxLayout, QWidget)
 
-from api import VERIFIED_ROVERS, ApiError, Cancelled, MarsVistaClient, load_api_key, save_api_key
+from api import SUPPORTED_ROVERS, ApiError, Cancelled, MarsVistaClient, load_api_key, save_api_key
+from pds import PdsClient, RoverSources, is_pds_rover
 from download import NASA_STATUS
 from plan import last_sol_on_disk
 from ratelimit import RequestTracker
@@ -40,11 +40,11 @@ SETTINGS_PATH = os.path.join(STATE_DIR, "settings.json")
 SCANS_PATH = os.path.join(STATE_DIR, "scans.json")
 REQUESTS_PATH = os.path.join(STATE_DIR, "requests.json")
 UNAVAILABLE_PATH = os.path.join(STATE_DIR, "unavailable.json")
-PAUSE_PATH = os.path.join(STATE_DIR, "paused.json")
+PAUSE_PATH = os.path.join(STATE_DIR, "paused.json")      # no longer written; removed if an old version left one
 
 AVG_PHOTO_MB = 0.2          # observed average across Curiosity and Perseverance downloads
-EXPERIMENTAL_ROVERS = ("Spirit", "Opportunity")     # Mars Vista image links are often broken for these
-ALL_ROVERS = tuple(VERIFIED_ROVERS) + EXPERIMENTAL_ROVERS
+ALL_ROVERS = SUPPORTED_ROVERS
+MAIN_ROVERS = ("Curiosity", "Perseverance")          # always shown in Library status
 
 
 # ---- formatting ------------------------------------------------------------------------------------------
@@ -123,21 +123,12 @@ def report_from_dict(d: dict) -> Report:
     return Report(**{k: v for k, v in d.items() if k in known})
 
 
-def load_checkpoint() -> dict | None:
+def remove_old_pause_file() -> None:
+    """Earlier versions saved a paused download to disk. Pausing now lasts only while the app is open."""
     try:
-        with open(PAUSE_PATH, encoding="utf-8") as f:
-            cp = json.load(f)
-        return cp if {"params", "rover", "sol", "report"} <= set(cp) else None
-    except (OSError, ValueError):
-        return None
-
-
-def save_checkpoint(cp: dict) -> None:
-    os.makedirs(STATE_DIR, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=STATE_DIR, suffix=".tmp")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(cp, f, indent=1)
-    os.replace(tmp, PAUSE_PATH)
+        os.remove(PAUSE_PATH)
+    except OSError:
+        pass
 
 
 # ---- theme -----------------------------------------------------------------------------------------------
@@ -160,14 +151,15 @@ def system_is_dark(app: QApplication) -> bool:
 
 
 def _check_icon() -> str:
-    """Path to a white tick SVG for checkbox indicators (Qt style sheets need a file)."""
-    path = os.path.join(tempfile.gettempdir(), "rover_scraper_check.svg")
-    if not os.path.exists(path):
-        with open(path, "w", encoding="utf-8") as f:
-            f.write('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">'
-                    '<path d="M3.5 8.5l3 3 6-7" fill="none" stroke="#FFFFFF" stroke-width="2" '
-                    'stroke-linecap="round" stroke-linejoin="round"/></svg>')
-    return path.replace("\\", "/")
+    """Path to the white tick SVG for checkbox indicators (Qt style sheets need a file). It ships with the
+    code, so nothing is written at run time."""
+    old = os.path.join(tempfile.gettempdir(), "rover_scraper_check.svg")    # written by earlier versions
+    if os.path.exists(old):
+        try:
+            os.remove(old)
+        except OSError:
+            pass
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "check.svg").replace("\\", "/")
 
 
 def apply_theme(app: QApplication, t: dict) -> None:
@@ -398,7 +390,9 @@ class MainWindow(QMainWindow):
         self.pausing = False
         self.run_params: dict = {}
         self.pos: dict = {}                      # where the current download is: rover, rover_index, sol, sol_min
-        self.checkpoint: dict | None = load_checkpoint()
+        # A paused download, kept in memory only: it lasts until Stop, a new Start, or closing the app.
+        self.checkpoint: dict | None = None
+        remove_old_pause_file()
         self._loading = False
         # Camera selection to bring back when an unticked rover is ticked again (and what's saved for it).
         self.saved_excluded: dict[str, set[str]] = {n: set(c) for n, c in self.settings.excluded_cameras.items()}
@@ -567,12 +561,9 @@ class MainWindow(QMainWindow):
         self.camera_panels: dict[str, CameraPanel] = {}
         for name in ALL_ROVERS:
             row = QHBoxLayout()
-            experimental = name in EXPERIMENTAL_ROVERS
-            box = QCheckBox(f"{name}  (experimental)" if experimental else name)
-            if experimental:
-                box.setToolTip("Mars Vista's image links for this rover are often broken, so many photos may fail "
-                               "to download.")
-                box.toggled.connect(lambda on, n=name: self._experimental_toggled(n, on))
+            box = QCheckBox(name)
+            if is_pds_rover(name):
+                box.setToolTip("Photos come from NASA's Planetary Data System archive (no Mars Vista requests).")
             box.toggled.connect(lambda _=False, n=name: self._rover_toggled(n))
             box.toggled.connect(self._validate)
             box.toggled.connect(lambda _=False: self._update_library_columns())
@@ -884,7 +875,7 @@ class MainWindow(QMainWindow):
         downloading = self.mode == "download" and not self.cancel.is_set()
         self.pause_btn.setEnabled(downloading)
         self.stop_btn.setEnabled((not idle and not self.cancel.is_set()) or (idle and bool(self.checkpoint)))
-        self.stop_btn.setToolTip("Discard the paused download" if idle and self.checkpoint else
+        self.stop_btn.setToolTip("End the paused download. Finished photos are kept." if idle and self.checkpoint else
                                  "End this run. Finished photos are kept; the next Start begins from the start.")
         self.open_btn.setEnabled(folder_given)
         for w in self.locked:
@@ -903,8 +894,10 @@ class MainWindow(QMainWindow):
     def _post(self, kind: str, payload=None) -> None:
         self.events.put((kind, payload))
 
-    def _client(self, key: str) -> MarsVistaClient:
-        return MarsVistaClient(key, tracker=self.tracker, cancel=self.cancel)
+    def _client(self, key: str) -> RoverSources:
+        """Curiosity and Perseverance from Mars Vista; Spirit and Opportunity from NASA's PDS archive."""
+        return RoverSources(MarsVistaClient(key, tracker=self.tracker, cancel=self.cancel),
+                            PdsClient(cancel=self.cancel, log=lambda m: self._post("log", m)))
 
     def _run_task(self, mode: str, fn) -> None:
         """Run fn() on a background thread. fn's return value arrives as a ("done", (mode, value)) event."""
@@ -1000,7 +993,7 @@ class MainWindow(QMainWindow):
         box = self.rover_boxes[name]
         if on and not box.isChecked():
             self.saved_excluded[name] = set(self.camera_panels[name].excluded())
-            box.setChecked(True)          # may ask first (Spirit/Opportunity); answering No unticks it again
+            box.setChecked(True)
         elif total and not on and box.isChecked():
             box.setChecked(False)
         self._update_camera_toggles()
@@ -1102,20 +1095,16 @@ class MainWindow(QMainWindow):
 
     def _about(self) -> None:
         QMessageBox.about(self, "About Rover Image Scraper",
-                          "<b>Rover Image Scraper</b><br><br>Downloads raw photos from NASA's Curiosity and "
-                          "Perseverance rovers using the Mars Vista API, adding only what's missing.<br><br>"
+                          "<b>Rover Image Scraper</b><br><br>Downloads raw photos from NASA's Mars rovers, "
+                          "adding only what's missing. Curiosity and Perseverance come from the Mars Vista API; "
+                          "Spirit and Opportunity from NASA's Planetary Data System archive.<br><br>"
                           'Photos: NASA/JPL-Caltech. Data: <a href="https://marsvista.dev">Mars Vista</a>.')
 
     def _stop(self) -> None:
-        if self.mode == "idle" and self.checkpoint:
-            answer = QMessageBox.question(
-                self, "Discard paused download?",
-                "Discard the paused download? Photos it already downloaded are kept. The next Start begins "
-                "from the beginning.")
-            if answer == QMessageBox.StandardButton.Yes:
-                self._clear_checkpoint()
-                self.phase.setText("Idle")
-                self.bar.setValue(0)
+        if self.mode == "idle" and self.checkpoint:     # stopping a paused download: forget where it was
+            self._clear_checkpoint()
+            self.phase.setText("Stopped · finished photos are kept")
+            self._log("Paused download stopped. Finished photos are kept.")
             return
         self.pausing = False
         self.cancel.set()
@@ -1153,24 +1142,12 @@ class MainWindow(QMainWindow):
         self._refresh_library()
         return True
 
-    def _experimental_toggled(self, name: str, on: bool) -> None:
-        if not on or self._loading:
-            return
-        answer = QMessageBox.warning(
-            self, f"{name} photos may fail",
-            f"Mars Vista's image links for {name} are often broken, so many photos may fail to download. "
-            f"Those are reported in the summary, and photos NASA refuses are skipped on later runs.\n\n"
-            f"Include {name} anyway?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
-        if answer != QMessageBox.StandardButton.Yes:
-            self.rover_boxes[name].setChecked(False)
-
     def _update_library_columns(self) -> None:
         """Library status shows a column for each ticked rover (Curiosity and Perseverance always)."""
         if not hasattr(self, "lib_heads"):
             return
         for rover in ALL_ROVERS:
-            show = rover in VERIFIED_ROVERS or self.rover_boxes[rover].isChecked()
+            show = rover in MAIN_ROVERS or self.rover_boxes[rover].isChecked()
             self.lib_heads[rover].setVisible(show)
             for row in self.lib_rows:
                 self.lib_cells[(row, rover)].setVisible(show)
@@ -1191,7 +1168,8 @@ class MainWindow(QMainWindow):
 
     def _sol_range(self, rover: str, bounds: tuple[int, int | None]) -> tuple[int, int]:
         lo, hi = bounds
-        max_sol = self.rover_info.get(rover, {}).get("max_sol", 10 ** 6)
+        # NASA PDS (Spirit, Opportunity) can have sols past Mars Vista's latest, so don't cap those.
+        max_sol = 10 ** 6 if is_pds_rover(rover) else self.rover_info.get(rover, {}).get("max_sol", 10 ** 6)
         return lo, (max_sol if hi is None else min(hi, max_sol))
 
     def _confirm_existing_folder(self) -> bool:
@@ -1343,15 +1321,10 @@ class MainWindow(QMainWindow):
               "sol_min": self.pos.get("sol_min", 0), "index": self.progress_state.get("index", 0),
               "total": self.progress_state.get("total", 0), "elapsed": time.time() - self.run_started,
               "report": report_to_dict(self.report), "saved_at": time.time()}
-        save_checkpoint(cp)
         self.checkpoint = cp
 
     def _clear_checkpoint(self) -> None:
         self.checkpoint = None
-        try:
-            os.remove(PAUSE_PATH)
-        except FileNotFoundError:
-            pass
         self._validate()
 
     def _show_paused_state(self) -> None:
@@ -1440,13 +1413,18 @@ class MainWindow(QMainWindow):
                 last = -1 if last is None else last
                 new = {s: v for s, v in manifest.items() if s > last and lo <= s <= hi}
                 existing = [s for s in manifest if s <= last and lo <= s <= hi]
-                row = {"rover": rover, "new_sols": len(new), "new_photos": sum(v.total_photos for v in new.values()),
-                       "requests": 1 + sum(math.ceil(v.total_photos / 100) for v in new.values())}
+                if is_pds_rover(rover):     # NASA PDS: free of Mars Vista quota; photos counted only per sol
+                    row = {"rover": rover, "new_sols": len(new), "new_photos": None, "requests": 0, "pds": True}
+                else:
+                    row = {"rover": rover, "new_sols": len(new),
+                           "new_photos": sum(v.total_photos for v in new.values()),
+                           "requests": 1 + sum(math.ceil(v.total_photos / 100) for v in new.values())}
                 if check_existing:
                     st = folder_status.rovers.get(rover)
                     known = st is not None and st.gap_sols is not None and not folder_status.outdated
                     row["gap_photos"] = st.gap_photos if known else None
-                    row["requests"] += len(existing) + ((st.gap_sols or 0) * 2 if known else 0)
+                    if not row.get("pds"):
+                        row["requests"] += len(existing) + ((st.gap_sols or 0) * 2 if known else 0)
                 rows.append(row)
             return rows
 
@@ -1609,18 +1587,22 @@ class MainWindow(QMainWindow):
         for c, head in enumerate(("", "New sols", "New photos", "Gap fills", "Size")):
             grid.addWidget(label(head, "rowHead"), 0, c)
         total_photos = total_requests = 0
-        unknown_gaps = False
+        unknown_gaps = any_pds = False
         for r, row in enumerate(rows, 1):
             gaps = row.get("gap_photos")
             if self._preview_check_existing and gaps is None:
                 unknown_gaps = True
-            photos = row["new_photos"] + (gaps or 0)
-            total_photos += photos
             total_requests += row["requests"]
             gap_text = "not included" if not self._preview_check_existing else (
                 "unknown" if gaps is None else f"up to {gaps:,}")
-            for c, text in enumerate((row["rover"], f"{row['new_sols']:,}", f"{row['new_photos']:,}", gap_text,
-                                      f"≈ {fmt_size(photos * AVG_PHOTO_MB * 1024 ** 2)}")):
+            if row["new_photos"] is None:       # NASA PDS rover: counted only while downloading
+                any_pds = True
+                photo_text, size_text = "counted as it goes", "–"
+            else:
+                photos = row["new_photos"] + (gaps or 0)
+                total_photos += photos
+                photo_text, size_text = f"{row['new_photos']:,}", f"≈ {fmt_size(photos * AVG_PHOTO_MB * 1024 ** 2)}"
+            for c, text in enumerate((row["rover"], f"{row['new_sols']:,}", photo_text, gap_text, size_text)):
                 grid.addWidget(label(text, "value" if c else "colHead"), r, c)
         lay.addLayout(grid)
         notes = [f"Needs about {total_requests:,} Mars Vista API requests (the limit is 10,000 per hour)."]
@@ -1629,6 +1611,10 @@ class MainWindow(QMainWindow):
                          "The run continues automatically after each one.")
         if unknown_gaps:
             notes.append("Gaps in existing sols aren't known yet. Run Full check to include them in the estimate.")
+        if any_pds:
+            notes.append("Spirit and Opportunity come from NASA's archive, which doesn't publish photo counts "
+                         "per sol, so their photos are counted as the download goes. They use no Mars Vista "
+                         "requests.")
         if self._preview_filtered:
             notes.append("With some cameras unticked, photo counts are upper bounds.")
         for n in notes:
@@ -1792,7 +1778,8 @@ class MainWindow(QMainWindow):
                 gaps = "None found"
             else:
                 gaps = f"{st.gap_sols:,} sols · up to {st.gap_photos:,}"
-            new = "N/A" if st.new_sols is None else f"{st.new_sols:,} sols · ~{st.new_photos:,}"
+            new = "N/A" if st.new_sols is None else (
+                f"{st.new_sols:,} sols" if st.new_photos is None else f"{st.new_sols:,} sols · ~{st.new_photos:,}")
             values = {"Sols": sols, "Photos": fmt(st.photos), "Size": fmt_size(st.bytes),
                       "Latest sol": fmt(latest), "To download": new, "Gaps in your sols": gaps}
             for row, text in values.items():
@@ -1821,32 +1808,16 @@ class MainWindow(QMainWindow):
     # ---- closing -----------------------------------------------------------------------------------------
 
     def closeEvent(self, event) -> None:
-        if self.mode == "download":
-            box = QMessageBox(self)
-            box.setWindowTitle("Download in progress")
-            box.setText("A download is running. Pause it so you can resume later, or stop it?\n\n"
-                        "Finished photos are kept either way.")
-            pause_btn = box.addButton("Pause and quit", QMessageBox.ButtonRole.AcceptRole)
-            stop_btn = box.addButton("Stop and quit", QMessageBox.ButtonRole.DestructiveRole)
-            box.addButton(QMessageBox.StandardButton.Cancel)
-            box.exec()
-            if box.clickedButton() not in (pause_btn, stop_btn):
-                event.ignore()
-                return
-            self.pausing = box.clickedButton() is pause_btn
-            self.cancel.set()
-            if self.worker:
-                self.worker.join(timeout=30)
-            self._tick()                     # handle the finished task (writes the pause checkpoint)
-        elif self.mode != "idle":
+        if self.mode != "idle":
             answer = QMessageBox.question(self, "Stop and quit?",
                                           "A task is running. Stop it and quit? Finished photos are kept.")
             if answer != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
+            self.pausing = False
             self.cancel.set()
             if self.worker:
-                self.worker.join(timeout=15)
+                self.worker.join(timeout=30)
         self._save_settings()
         self.tracker.save()
         event.accept()

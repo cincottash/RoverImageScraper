@@ -18,9 +18,10 @@ from ratelimit import RequestTracker
 BASE_URL = "https://api.marsvista.dev"
 PAGE_SIZE = 100
 
-# Rovers whose Mars Vista data has been checked against the old API's output by hash comparison.
-# Spirit and Opportunity image links from Mars Vista were broken or did not match, so they are excluded.
-VERIFIED_ROVERS = ("Curiosity", "Perseverance")
+# Curiosity and Perseverance come from Mars Vista (checked against the old API's output by hash comparison).
+# Spirit and Opportunity come from NASA's PDS archive (see pds.py), because Mars Vista's lists for them are
+# incomplete. Their counts were checked against folders made with the old API.
+SUPPORTED_ROVERS = ("Curiosity", "Perseverance", "Spirit", "Opportunity")
 
 
 class ApiError(Exception):
@@ -46,7 +47,7 @@ class RoverInfo:
 
 @dataclass(frozen=True)
 class SolSummary:
-    total_photos: int
+    total_photos: int | None          # None when the source can't tell without listing the sol (NASA PDS)
     cameras: tuple[str, ...]
 
 

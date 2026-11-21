@@ -83,6 +83,10 @@ class Scraper:
         except Cancelled:
             report.cancelled = True
             return report
+        except Exception as e:  # noqa: BLE001 - this rover can't be checked; the others still run
+            report.problems.append(f"{rover}: list of sols could not be fetched: {e}")
+            self.log(f"ERROR {rover}: list of sols could not be fetched: {e}")
+            return report
         allowed = self.cameras.get(rover)
         sols = sorted(s for s in manifest if sol_min <= s <= sol_max)
         self.progress({"event": "rover", "rover": rover, "total": len(sols), "sol_min": sol_min,
@@ -104,7 +108,8 @@ class Scraper:
                 self.log(f"... {rover}: checked {report.sols_checked} sols, now at sol {sol}")
             try:
                 disk = disk_camera_counts(self.dest, rover, sol)
-                if disk is None and self.dry_run:
+                known_total = summary.total_photos is not None    # NASA PDS sols must be listed to count
+                if disk is None and self.dry_run and known_total:
                     # Whole sol is missing: the manifest already gives its size, no listing needed. With a
                     # camera filter this is an upper bound, since the manifest doesn't split photos by camera.
                     self.log(f"PLAN {rover}/{sol}: new sol, {summary.total_photos} file(s) "
@@ -114,7 +119,7 @@ class Scraper:
                     report.sols_with_work += 1
                     continue
                 if disk is not None:
-                    if allowed is None and exact_match(disk, summary.total_photos, list(summary.cameras)):
+                    if allowed is None and known_total and exact_match(disk, summary.total_photos, list(summary.cameras)):
                         report.sols_skipped_quick += 1
                         continue
                     counts = self.client.camera_counts(rover, sol)

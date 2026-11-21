@@ -7,13 +7,13 @@ import os
 import tempfile
 from dataclasses import asdict, dataclass, field, fields
 
-from api import VERIFIED_ROVERS
+from api import SUPPORTED_ROVERS
 
 
 @dataclass
 class Settings:
     folder: str = ""
-    rovers: list[str] = field(default_factory=lambda: list(VERIFIED_ROVERS))
+    rovers: list[str] = field(default_factory=lambda: list(SUPPORTED_ROVERS))
     # Cameras the user unticked, per rover. Storing exclusions (not inclusions) means cameras Mars Vista adds
     # later are included by default.
     excluded_cameras: dict[str, list[str]] = field(default_factory=dict)

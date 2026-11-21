@@ -1,8 +1,13 @@
 # RoverImageScraper
 
-Downloads raw photos from NASA's Mars rovers, Curiosity and Perseverance, into a simple folder tree, using the
-[Mars Vista API](https://github.com/james-langridge/mars-vista-api). Run it again later and it downloads only
-what's new or missing.
+Downloads raw photos from NASA's Mars rovers (Curiosity, Perseverance, Spirit and Opportunity) into a simple
+folder tree. Run it again later and it downloads only what's new or missing.
+
+- **Curiosity and Perseverance** come from the [Mars Vista API](https://github.com/james-langridge/mars-vista-api).
+- **Spirit and Opportunity** come straight from NASA's
+  [Planetary Data System (PDS) Imaging Node](https://pds-imaging.jpl.nasa.gov/) archive. Mars Vista's lists for
+  these two rovers leave out many photos, and the PDS archive is NASA's permanent record of them. No API key or
+  Mars Vista requests are needed for them.
 
 ```
 <dest>/
@@ -60,22 +65,22 @@ From the project folder:
 
 Pausing and stopping:
 
-- **Pause** finishes the photos in progress and remembers exactly where the download is. **Resume** continues
-  from that sol without re-checking the sols before it. The paused position is kept if you close the app; closing
-  during a download offers *Pause and quit*.
-- **Stop** ends the run. Finished photos are kept, and the next Start begins from the beginning (sols that are
-  already complete are skipped quickly). While paused, Stop discards the paused position.
+- **Pause** finishes the photos in progress and remembers where the download is while the app stays open.
+  **Resume** continues from that sol without re-checking the sols before it.
+- **Stop** ends the run, or ends a paused one. Closing the app does the same. Finished photos are always kept,
+  and the next Start begins from the beginning (sols that are already complete are skipped quickly).
 
 What the window offers:
 
 - **Rovers and cameras:** tick the rovers to download, and open *Cameras* to leave out cameras you don't want.
   Unticking a rover unticks its cameras (ticking it again brings your camera choice back), and ticking a camera
-  ticks its rover. If Start is greyed out, the bar at the bottom says what's missing. Spirit and Opportunity are marked *experimental*: Mars Vista's image links for them are often broken, so the
-  app warns you before including them.
+  ticks its rover. If Start is greyed out, the bar at the bottom says what's missing.
 - **Check existing sols for missing photos:** when ticked, the run starts at sol 0 and fills gaps in sols you
   already have (slower). Untick it to only download sols after the last one in the folder.
 - **Sols from/to:** limit the run to a range of sols. Leave blank for all.
 - **Library status:** sols, photos and size on disk, the latest sol available, and how many new sols there are.
+  For Spirit and Opportunity the number of new photos isn't known until each sol is looked at, so only sols are
+  shown.
   *Full check* also finds gaps in existing sols; it uses about one API request per sol on disk, so it asks first.
 - **Progress:** photos and data downloaded, current speed (averaged over a few seconds), average speed, photo
   rate, elapsed time and an estimate of the time left.
@@ -100,7 +105,8 @@ below, replace `C:\path\to\MarsPhotos` with your folder (on macOS or Linux, a pa
 Run the commands from the project folder (the one containing `rover_scraper\`).
 
 ```bat
-:: First download into an empty folder (all of Curiosity and Perseverance: about 1.3 million photos, ~270 GB)
+:: First download into an empty folder (all four rovers; Curiosity and Perseverance alone are about 1.3 million
+:: photos, ~270 GB)
 .venv\Scripts\python rover_scraper\main.py "C:\path\to\MarsPhotos"
 
 :: Preview what would be downloaded, without writing anything
@@ -118,7 +124,7 @@ To run from any other folder, use full paths to both `python.exe` (inside `.venv
 
 | Option | Meaning |
 |---|---|
-| `--rovers` | Comma-separated: `curiosity`, `perseverance` (default: both) |
+| `--rovers` | Comma-separated: `curiosity`, `perseverance`, `spirit`, `opportunity` (default: all four) |
 | `--sol-min`, `--sol-max` | Sol range to check (default: all sols) |
 | `--dry-run` | Show what would be downloaded; write nothing |
 | `--allow-existing` | Required to add to a folder that already contains rover data |
@@ -131,23 +137,29 @@ To run from any other folder, use full paths to both `python.exe` (inside `.venv
 ### How updates work
 
 - The program never overwrites, renames or deletes existing files. It only adds new ones.
-- For each sol it compares the number of files on disk with the number Mars Vista lists for each camera. Sols
+- For each sol it compares the number of files on disk with the number the source lists for each camera. Sols
   that match are skipped quickly. Short camera folders get only the photos that aren't already there, numbered
   after the highest existing file.
 - A run interrupted with Ctrl+C keeps every finished file and leaves no partial files. Run the same command
   again to continue.
 - Mars Vista allows 10,000 requests per hour and 100,000 per day. The program counts its own requests, slows
   down before reaching a limit, waits if the server asks it to, and then carries on. The command line prints a
-  line when it starts waiting and shows the counts at the end. Photo downloads come from NASA and don't count.
+  line when it starts waiting and shows the counts at the end. Photo downloads come from NASA and don't count,
+  and neither does anything for Spirit or Opportunity.
+- For Spirit and Opportunity, each sol's photos are read from NASA's PDS folders: the full-frame, downsampled
+  and sub-frame images, leaving out thumbnails and calibration images. This matches what the old Mars Rover
+  Photos API offered. A sol without photos is answered in a fraction of a second, so checking every sol of
+  these finished missions is quick.
 - NASA no longer serves some older images (HTTP 403/404). These are remembered in
   `%LOCALAPPDATA%\RoverImageScraper\unavailable.json` (on macOS/Linux, `~/.local/share/RoverImageScraper/`) so
   they don't count as missing on every run.
 
 ### Limits
 
-- **Spirit and Opportunity are experimental.** Mars Vista's image links for them are often broken, so many of
-  their photos may fail to download. The command line leaves them out unless you pass `--include-unverified`;
-  the desktop app asks before including them.
+- **Spirit and Opportunity images are NASA's archive versions.** Folders made with the old Mars Rover Photos API
+  hold NASA's old public-gallery copies of the same photos, which were brightened and are 500×500 instead of
+  512×512. The program can't tell that two such files are the same photo, so where the archive lists more photos
+  than a folder has, the added photos can include archive copies of photos already there.
 - **Curiosity thumbnails are not included.** Folders made with the old Mars Rover Photos API may contain
   thumbnail copies as extra numbered files. Mars Vista doesn't list them, so those folders look "complete" by
   count even if a full-size photo is missing.
@@ -162,6 +174,7 @@ All code is in `rover_scraper/`:
 - `gui.py`: the desktop app.
 - `cli.py`: command-line options and the end-of-run summary.
 - `api.py`: the Mars Vista client (the only code that knows the API).
+- `pds.py`: Spirit and Opportunity photos from NASA's PDS archive.
 - `ratelimit.py`: counts API requests per hour and day, and waits near the limits.
 - `plan.py`: decides what's missing.
 - `scraper.py`: runs the checks and downloads.

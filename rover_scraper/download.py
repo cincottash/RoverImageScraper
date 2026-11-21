@@ -73,8 +73,14 @@ def head_size(session: requests.Session, url: str, timeout: float = 60, retries:
     return None
 
 
+USER_AGENT = "RoverImageScraper/1.0 (+https://github.com/cincottash/RoverImageScraper)"
+
+
 def make_session(pool_size: int) -> requests.Session:
     s = requests.Session()
+    # NASA's Planetary Data System (where Spirit and Opportunity images are) refuses requests that don't say
+    # what program is making them, so name this one.
+    s.headers["User-Agent"] = USER_AGENT
     adapter = requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=pool_size)
     s.mount("https://", adapter)
     s.mount("http://", adapter)

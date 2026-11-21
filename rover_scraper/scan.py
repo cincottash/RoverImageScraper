@@ -77,7 +77,8 @@ def quick_scan(client: MarsVistaClient, dest: str, rover: str,
     newer = {s: v for s, v in manifest.items() if s > last}
     status.latest_sol = max(manifest) if manifest else None
     status.new_sols = len(newer)
-    status.new_photos = sum(v.total_photos for v in newer.values())
+    counts = [v.total_photos for v in newer.values()]
+    status.new_photos = None if None in counts else sum(counts)     # unknown for NASA PDS rovers
     status.scanned_at = time.time()
     return status
 
