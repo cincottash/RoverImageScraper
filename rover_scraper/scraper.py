@@ -66,8 +66,17 @@ class Scraper:
             report.sols_checked += 1
             summary = manifest[sol]
             unavailable = self.unavailable.per_camera(rover, sol)
+            if report.sols_checked % 100 == 0:
+                self.log(f"... {rover}: checked {report.sols_checked} sols, now at sol {sol}")
             try:
                 disk = disk_camera_counts(self.dest, rover, sol)
+                if disk is None and self.dry_run:
+                    # Whole sol is missing: the manifest already gives its size, no listing needed.
+                    self.log(f"PLAN {rover}/{sol}: new sol, {summary.total_photos} file(s) "
+                             f"in {len(summary.cameras)} camera(s)")
+                    report.actions["new"] += len(summary.cameras)
+                    report.would_download += summary.total_photos
+                    continue
                 if disk is not None:
                     if exact_match(disk, summary.total_photos, list(summary.cameras)):
                         report.sols_skipped_quick += 1
