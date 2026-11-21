@@ -67,11 +67,14 @@ class Scraper:
         self.cameras = cameras or {}
 
     def run(self, rover: str, sol_min: int, sol_max: int, report: Report | None = None,
-            new_only: bool = False) -> Report:
+            new_only: bool = False, resume_from: int | None = None) -> Report:
         """Check sols sol_min..sol_max in order and add what's missing. new_only skips sols up to the last sol
-        already on disk, so existing sols aren't checked for gaps (much faster when they're known complete)."""
+        already on disk, so existing sols aren't checked for gaps (much faster when they're known complete).
+        resume_from continues a paused run: sols before it are skipped without any checks, while progress still
+        counts them, so the bar continues where it stopped. (new_only is ignored when resuming, because the
+        paused sol may already be on disk; pass the sol_min the paused run started with.)"""
         report = report or Report()
-        if new_only:
+        if new_only and resume_from is None:
             last = last_sol_on_disk(self.dest, rover)
             if last is not None:
                 sol_min = max(sol_min, last + 1)
@@ -88,6 +91,8 @@ class Scraper:
             if self.cancel.is_set():
                 report.cancelled = True
                 break
+            if resume_from is not None and sol < resume_from:
+                continue
             report.sols_checked += 1
             summary = manifest[sol]
             manifest_cams = [c for c in summary.cameras if allowed is None or c in allowed]

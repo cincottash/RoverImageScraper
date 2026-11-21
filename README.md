@@ -52,14 +52,25 @@ From the project folder:
 .venv\Scripts\python rover_scraper\gui.py
 ```
 
-1. Choose a **photo folder** (any drive) and paste your **API key**.
+1. Choose a **photo folder** (any drive) and paste your **API key**. If the folder doesn't exist yet, the app
+   offers to create it when you start.
 2. Click **Quick scan** to see what's already in the folder and what's new on Mars Vista.
 3. Optionally click **Preview** to see roughly how many photos and gigabytes a download would add.
-4. Click **Start**. **Stop** keeps every finished photo; clicking Start again continues where it left off.
+4. Click **Start**.
+
+Pausing and stopping:
+
+- **Pause** finishes the photos in progress and remembers exactly where the download is. **Resume** continues
+  from that sol without re-checking the sols before it. The paused position is kept if you close the app; closing
+  during a download offers *Pause and quit*.
+- **Stop** ends the run. Finished photos are kept, and the next Start begins from the beginning (sols that are
+  already complete are skipped quickly). While paused, Stop discards the paused position.
 
 What the window offers:
 
 - **Rovers and cameras:** tick the rovers to download, and open *Cameras* to leave out cameras you don't want.
+  Spirit and Opportunity are marked *experimental*: Mars Vista's image links for them are often broken, so the
+  app warns you before including them.
 - **Check existing sols for missing photos:** when ticked, the run starts at sol 0 and fills gaps in sols you
   already have (slower). Untick it to only download sols after the last one in the folder.
 - **Sols from/to:** limit the run to a range of sols. Leave blank for all.
@@ -71,9 +82,11 @@ What the window offers:
   limit is reached, an amber banner shows a countdown, and the download carries on by itself afterwards.
 - **Activity:** the same log the command line prints.
 - **Menus:**
+  - *File*: choose or open the photo folder, quit.
+  - *Settings*: retry photos NASA refused on the next run, and open the settings folder.
   - *View*: units for data (KB/MB/GB/TB) and speed (KB/s, MB/s, Mbit/s), how long the speed is averaged over,
     light/dark theme, and showing or hiding the activity log.
-  - *Settings*: retry photos NASA refused on the next run, and open the settings folder.
+  - *Help*: the Mars Vista website and About.
 
 Settings, scan results and the request counts are saved in `%LOCALAPPDATA%\RoverImageScraper\` (on macOS/Linux,
 `~/.local/share/RoverImageScraper/`), never in the repo or the photo folder.
@@ -131,8 +144,9 @@ To run from any other folder, use full paths to both `python.exe` (inside `.venv
 
 ### Limits
 
-- **Spirit and Opportunity are not downloaded.** Mars Vista's image links for them are often broken.
-  `--include-unverified` overrides this, but expect failures.
+- **Spirit and Opportunity are experimental.** Mars Vista's image links for them are often broken, so many of
+  their photos may fail to download. The command line leaves them out unless you pass `--include-unverified`;
+  the desktop app asks before including them.
 - **Curiosity thumbnails are not included.** Folders made with the old Mars Rover Photos API may contain
   thumbnail copies as extra numbered files. Mars Vista doesn't list them, so those folders look "complete" by
   count even if a full-size photo is missing.

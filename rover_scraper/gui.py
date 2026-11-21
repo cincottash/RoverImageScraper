@@ -8,6 +8,7 @@ responsive, and Stop works like Ctrl+C in the command line: finished photos are 
 from __future__ import annotations
 
 import collections
+import json
 import math
 import os
 import queue
@@ -30,6 +31,7 @@ from plan import last_sol_on_disk
 from ratelimit import RequestTracker
 from scan import RoverStatus, ScanStore, full_check, quick_scan
 from scraper import Report, Scraper
+from dataclasses import asdict
 from settings import Settings
 from state import Unavailable, default_state_dir
 
@@ -38,9 +40,11 @@ SETTINGS_PATH = os.path.join(STATE_DIR, "settings.json")
 SCANS_PATH = os.path.join(STATE_DIR, "scans.json")
 REQUESTS_PATH = os.path.join(STATE_DIR, "requests.json")
 UNAVAILABLE_PATH = os.path.join(STATE_DIR, "unavailable.json")
+PAUSE_PATH = os.path.join(STATE_DIR, "paused.json")
 
 AVG_PHOTO_MB = 0.2          # observed average across Curiosity and Perseverance downloads
-UNAVAILABLE_ROVERS = ("Spirit", "Opportunity")
+EXPERIMENTAL_ROVERS = ("Spirit", "Opportunity")     # Mars Vista image links are often broken for these
+ALL_ROVERS = tuple(VERIFIED_ROVERS) + EXPERIMENTAL_ROVERS
 
 
 # ---- formatting ------------------------------------------------------------------------------------------
@@ -101,6 +105,39 @@ def fmt_when(ts) -> str:
     if time.strftime("%Y%m%d", time.localtime(ts)) == time.strftime("%Y%m%d"):
         return time.strftime("today %H:%M", time.localtime(ts))
     return time.strftime("%d %b %Y, %H:%M", time.localtime(ts))
+
+
+# ---- pause checkpoint ------------------------------------------------------------------------------------
+
+def report_to_dict(r: Report) -> dict:
+    d = asdict(r)
+    d["actions"] = dict(r.actions)
+    return d
+
+
+def report_from_dict(d: dict) -> Report:
+    d = dict(d)
+    d["actions"] = collections.Counter(d.get("actions", {}))
+    d["cancelled"] = False
+    known = Report.__dataclass_fields__
+    return Report(**{k: v for k, v in d.items() if k in known})
+
+
+def load_checkpoint() -> dict | None:
+    try:
+        with open(PAUSE_PATH, encoding="utf-8") as f:
+            cp = json.load(f)
+        return cp if {"params", "rover", "sol", "report"} <= set(cp) else None
+    except (OSError, ValueError):
+        return None
+
+
+def save_checkpoint(cp: dict) -> None:
+    os.makedirs(STATE_DIR, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=STATE_DIR, suffix=".tmp")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(cp, f, indent=1)
+    os.replace(tmp, PAUSE_PATH)
 
 
 # ---- theme -----------------------------------------------------------------------------------------------
@@ -326,6 +363,11 @@ class MainWindow(QMainWindow):
         self.rover_started = 0.0
         self.run_started = 0.0
         self.run_ended = 0.0
+        self.pausing = False
+        self.run_params: dict = {}
+        self.pos: dict = {}                      # where the current download is: rover, rover_index, sol, sol_min
+        self.checkpoint: dict | None = load_checkpoint()
+        self._loading = False
         self.speed_samples: collections.deque = collections.deque(maxlen=1000)
         self.api_error = ""
         self.last_summary = ""
@@ -405,12 +447,19 @@ class MainWindow(QMainWindow):
         self.preview_btn.clicked.connect(self._preview)
         bl.addWidget(self.preview_btn)
         bl.addStretch()
+        self.pause_btn = QPushButton("Pause")
+        self.pause_btn.setToolTip("Finish the photos in progress and remember where the download is, so Resume "
+                                  "continues from the same sol without re-checking earlier sols")
+        self.pause_btn.setEnabled(False)
+        self.pause_btn.clicked.connect(self._pause)
+        bl.addWidget(self.pause_btn)
         self.stop_btn = QPushButton("Stop")
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self._stop)
         bl.addWidget(self.stop_btn)
         self.start_btn = QPushButton("▶  Start")
         self.start_btn.setObjectName("primary")
+        self.start_btn.setMinimumWidth(130)
         self.start_btn.clicked.connect(self._start_download)
         bl.addWidget(self.start_btn)
         outer.addWidget(bottom)
@@ -426,6 +475,11 @@ class MainWindow(QMainWindow):
         browse.clicked.connect(self._browse)
         row.addWidget(browse)
         lay.addLayout(row)
+        self.folder_hint = label("This folder doesn't exist yet. You'll be asked to create it when you start.",
+                                 "muted", wrap=True)
+        self.folder_hint.setProperty("tone", "warn")
+        self.folder_hint.setVisible(False)
+        lay.addWidget(self.folder_hint)
         row2 = QHBoxLayout()
         self.open_btn = link_button("Open folder")
         self.open_btn.clicked.connect(self._open_folder)
@@ -464,10 +518,16 @@ class MainWindow(QMainWindow):
         self.rover_status: dict[str, QLabel] = {}
         self.camera_toggles: dict[str, QToolButton] = {}
         self.camera_panels: dict[str, CameraPanel] = {}
-        for name in VERIFIED_ROVERS:
+        for name in ALL_ROVERS:
             row = QHBoxLayout()
-            box = QCheckBox(name)
+            experimental = name in EXPERIMENTAL_ROVERS
+            box = QCheckBox(f"{name}  (experimental)" if experimental else name)
+            if experimental:
+                box.setToolTip("Mars Vista's image links for this rover are often broken, so many photos may fail "
+                               "to download.")
+                box.toggled.connect(lambda on, n=name: self._experimental_toggled(n, on))
             box.toggled.connect(self._validate)
+            box.toggled.connect(lambda _=False: self._update_library_columns())
             row.addWidget(box)
             status = label("N/A", "muted")
             status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -487,11 +547,6 @@ class MainWindow(QMainWindow):
             self.rover_boxes[name], self.rover_status[name] = box, status
             self.camera_toggles[name], self.camera_panels[name] = toggle, panel
             self.locked += [box, toggle, panel]
-        off = QCheckBox(" / ".join(UNAVAILABLE_ROVERS) + "  (unavailable)")
-        off.setEnabled(False)
-        off.setToolTip("Mars Vista's image links for Spirit and Opportunity are often broken, so they aren't "
-                       "downloaded.")
-        lay.addWidget(off)
         self.left_col.addWidget(frame)
 
     def _build_options_card(self) -> None:
@@ -547,8 +602,10 @@ class MainWindow(QMainWindow):
                     ("ON MARS VISTA", ["Latest sol", "To download", "Gaps in your sols"])]
         self.lib_rows = [row for _, rows in sections for row in rows]
         self.lib_cells: dict[tuple[str, str], QLabel] = {}
-        for c, rover in enumerate(VERIFIED_ROVERS, 1):
-            grid.addWidget(label(rover, "colHead"), 0, c)
+        self.lib_heads: dict[str, QLabel] = {}
+        for c, rover in enumerate(ALL_ROVERS, 1):
+            self.lib_heads[rover] = label(rover, "colHead")
+            grid.addWidget(self.lib_heads[rover], 0, c)
         tip = ("Only sols that have photos are counted. Sol numbers count every Mars day since landing, but on some "
                "days the rover sent back no images (for example during solar conjunction, when the Sun blocks "
                "communication with Earth).")
@@ -556,20 +613,20 @@ class MainWindow(QMainWindow):
         self.lib_note = label("Not every sol has photos, so this can be fewer than the latest sol.", "muted",
                               wrap=True)
         self.lib_note.setToolTip(tip)
-        note_col = len(VERIFIED_ROVERS) + 1
+        note_col = len(ALL_ROVERS) + 1
         r = 1
         for title, rows in sections:
-            grid.addWidget(label(title, "section"), r, 0, 1, len(VERIFIED_ROVERS) + 1)
+            grid.addWidget(label(title, "section"), r, 0, 1, len(ALL_ROVERS) + 1)
             r += 1
             for row_name in rows:
                 grid.addWidget(label("   " + row_name, "rowHead"), r, 0)
-                for c, rover in enumerate(VERIFIED_ROVERS, 1):
+                for c, rover in enumerate(ALL_ROVERS, 1):
                     cell = label("N/A", "value")
                     self.lib_cells[(row_name, rover)] = cell
                     grid.addWidget(cell, r, c)
                 if row_name == "To download":
                     grid.addWidget(self.lib_note, r, note_col)
-                    for rover in VERIFIED_ROVERS:
+                    for rover in ALL_ROVERS:
                         self.lib_cells[(row_name, rover)].setToolTip(tip)
                 r += 1
         grid.setColumnStretch(note_col, 1)
@@ -688,6 +745,7 @@ class MainWindow(QMainWindow):
             self.key_edit.setText(load_api_key())
         except ApiError:
             self.key_edit.setText("")
+        self._loading = True
         for name, box in self.rover_boxes.items():
             box.setChecked(name in s.rovers)
             cams = s.known_cameras.get(name, [])
@@ -696,8 +754,12 @@ class MainWindow(QMainWindow):
         self.sol_from.setText(s.sol_from)
         self.sol_to.setText(s.sol_to)
         self.workers.setValue(s.workers)
+        self._loading = False
         self._update_camera_toggles()
+        self._update_library_columns()
         self._set_log_visible(s.show_log)
+        if self.checkpoint:
+            self._show_paused_state()
 
     def _collect_settings(self) -> None:
         s = self.settings
@@ -738,20 +800,28 @@ class MainWindow(QMainWindow):
         return [n for n, b in self.rover_boxes.items() if b.isChecked()]
 
     def _validate(self) -> None:
-        folder_ok = bool(self._folder()) and os.path.isdir(self._folder())
+        folder_given = bool(self._folder())
+        folder_exists = folder_given and os.path.isdir(self._folder())
         key_ok = bool(self._key())
-        for edit, ok in ((self.folder_edit, folder_ok), (self.key_edit, key_ok)):
+        for edit, ok in ((self.folder_edit, folder_given), (self.key_edit, key_ok)):
             if edit.property("missing") != (not ok):
                 edit.setProperty("missing", not ok)
                 repolish(edit)
+        self.folder_hint.setVisible(folder_given and not folder_exists)
         idle = self.mode == "idle"
-        ready = folder_ok and key_ok and bool(self._selected_rovers())
-        self.start_btn.setEnabled(idle and ready)
-        self.preview_btn.setEnabled(idle and ready)
+        rovers_ok = bool(self._selected_rovers())
+        ready = folder_given and key_ok and rovers_ok
+        self.start_btn.setEnabled(idle and (ready or bool(self.checkpoint)))
+        self.start_btn.setText("▶  Resume" if self.checkpoint else "▶  Start")
+        self.preview_btn.setEnabled(idle and key_ok and rovers_ok)
         self.quick_btn.setEnabled(idle and ready)
         self.full_btn.setEnabled(idle and ready)
-        self.stop_btn.setEnabled(not idle and not self.cancel.is_set())
-        self.open_btn.setEnabled(folder_ok)
+        downloading = self.mode == "download" and not self.cancel.is_set()
+        self.pause_btn.setEnabled(downloading)
+        self.stop_btn.setEnabled((not idle and not self.cancel.is_set()) or (idle and bool(self.checkpoint)))
+        self.stop_btn.setToolTip("Discard the paused download" if idle and self.checkpoint else
+                                 "End this run. Finished photos are kept; the next Start begins from the start.")
+        self.open_btn.setEnabled(folder_exists)
         for w in self.locked:
             w.setEnabled(idle)
         if hasattr(self, "act_choose"):
@@ -866,8 +936,11 @@ class MainWindow(QMainWindow):
 
     def _build_menus(self) -> None:
         mb = self.menuBar()
-
         file_m = mb.addMenu("&File")
+        settings_m = mb.addMenu("&Settings")
+        view_m = mb.addMenu("&View")
+        help_m = mb.addMenu("&Help")
+
         self.act_choose = file_m.addAction("Choose photo folder…")
         self.act_choose.setShortcut(QKeySequence("Ctrl+O"))
         self.act_choose.triggered.connect(self._browse)
@@ -878,7 +951,6 @@ class MainWindow(QMainWindow):
         quit_act.setShortcut(QKeySequence("Ctrl+Q"))
         quit_act.triggered.connect(self.close)
 
-        view_m = mb.addMenu("&View")
         self._choice_menu(view_m, "Data units", [("Auto", "auto"), ("KB", "KB"), ("MB", "MB"), ("GB", "GB"),
                                                  ("TB", "TB")], "data_unit")
         self._choice_menu(view_m, "Speed units", [("Auto", "auto"), ("KB/s", "KB/s"), ("MB/s", "MB/s"),
@@ -893,7 +965,6 @@ class MainWindow(QMainWindow):
         self.act_log.setChecked(self.settings.show_log)
         self.act_log.toggled.connect(self._set_log_visible)
 
-        settings_m = mb.addMenu("&Settings")
         settings_m.setToolTipsVisible(True)
         self.act_retry = settings_m.addAction("Retry photos NASA refused (next run)")
         self.act_retry.setCheckable(True)
@@ -902,7 +973,6 @@ class MainWindow(QMainWindow):
         folder_act = settings_m.addAction("Open settings folder")
         folder_act.triggered.connect(self._open_settings_folder)
 
-        help_m = mb.addMenu("&Help")
         site = help_m.addAction("Mars Vista website")
         site.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://marsvista.dev")))
         about = help_m.addAction("About Rover Image Scraper")
@@ -943,9 +1013,73 @@ class MainWindow(QMainWindow):
                           'Photos: NASA/JPL-Caltech. Data: <a href="https://marsvista.dev">Mars Vista</a>.')
 
     def _stop(self) -> None:
+        if self.mode == "idle" and self.checkpoint:
+            answer = QMessageBox.question(
+                self, "Discard paused download?",
+                "Discard the paused download? Photos it already downloaded are kept. The next Start begins "
+                "from the beginning.")
+            if answer == QMessageBox.StandardButton.Yes:
+                self._clear_checkpoint()
+                self.phase.setText("Idle")
+                self.bar.setValue(0)
+            return
+        self.pausing = False
         self.cancel.set()
         self.phase.setText("Stopping… finishing current photos")
         self._validate()
+
+    def _pause(self) -> None:
+        self.pausing = True
+        self.cancel.set()
+        self.phase.setText("Pausing… finishing current photos")
+        self._validate()
+
+    def _ensure_folder(self, folder: str | None = None) -> bool:
+        """True if the photo folder exists, or the user agreed to create it and it was created."""
+        folder = folder or self._folder()
+        if not folder:
+            QMessageBox.warning(self, "No photo folder", "Choose a folder to save photos in first.")
+            return False
+        if os.path.isdir(folder):
+            return True
+        if os.path.exists(folder):
+            QMessageBox.warning(self, "Not a folder", f"{folder}\n\nThis path is a file, not a folder.")
+            return False
+        answer = QMessageBox.question(self, "Create folder?",
+                                      f"{folder}\n\nThis folder doesn't exist. Create it?")
+        if answer != QMessageBox.StandardButton.Yes:
+            return False
+        try:
+            os.makedirs(folder)
+        except OSError as e:
+            QMessageBox.warning(self, "Couldn't create the folder", f"{folder}\n\n{e}")
+            return False
+        self._log(f"Created folder {folder}")
+        self._validate()
+        self._refresh_library()
+        return True
+
+    def _experimental_toggled(self, name: str, on: bool) -> None:
+        if not on or self._loading:
+            return
+        answer = QMessageBox.warning(
+            self, f"{name} photos may fail",
+            f"Mars Vista's image links for {name} are often broken, so many photos may fail to download. "
+            f"Those are reported in the summary, and photos NASA refuses are skipped on later runs.\n\n"
+            f"Include {name} anyway?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            self.rover_boxes[name].setChecked(False)
+
+    def _update_library_columns(self) -> None:
+        """Library status shows a column for each ticked rover (Curiosity and Perseverance always)."""
+        if not hasattr(self, "lib_heads"):
+            return
+        for rover in ALL_ROVERS:
+            show = rover in VERIFIED_ROVERS or self.rover_boxes[rover].isChecked()
+            self.lib_heads[rover].setVisible(show)
+            for row in self.lib_rows:
+                self.lib_cells[(row, rover)].setVisible(show)
 
     def _camera_filter(self) -> dict[str, set[str]] | None:
         out = {}
@@ -981,14 +1115,45 @@ class MainWindow(QMainWindow):
             return True
         return False
 
+    def _run_params(self) -> dict:
+        """The choices that define a download, in a form that can be saved and compared."""
+        cams = self._camera_filter()
+        return {"folder": os.path.normcase(os.path.abspath(self._folder())) if self._folder() else "",
+                "rovers": self._selected_rovers(),
+                "cameras": {r: sorted(c) for r, c in cams.items()} if cams else None,
+                "new_only": not self.check_existing.isChecked(),
+                "bounds": list(self._sol_bounds())}
+
     def _start_download(self) -> None:
-        if not self._confirm_existing_folder():
+        cp = self.checkpoint
+        if cp:
+            if cp["params"] != self._run_params():
+                box = QMessageBox(self)
+                box.setWindowTitle("Paused download")
+                box.setText(f"You have a paused download ({cp['rover']} sol {cp['sol']:,}).\n\nYour choices have "
+                            f"changed since it was paused. Resume it with its original choices, or start a new "
+                            f"download with the current ones? (Starting new discards the paused position; "
+                            f"downloaded photos are kept.)")
+                resume_btn = box.addButton("Resume paused", QMessageBox.ButtonRole.AcceptRole)
+                new_btn = box.addButton("Start new", QMessageBox.ButtonRole.DestructiveRole)
+                box.addButton(QMessageBox.StandardButton.Cancel)
+                box.exec()
+                if box.clickedButton() is new_btn:
+                    self._clear_checkpoint()
+                    cp = None
+                elif box.clickedButton() is not resume_btn:
+                    return
+        if cp:
+            self._resume_download(cp)
+            return
+        if not self._ensure_folder() or not self._confirm_existing_folder():
             return
         self._save_settings()
         self._save_key()
         dest, rovers, cameras = self._folder(), self._selected_rovers(), self._camera_filter()
         new_only, workers = not self.check_existing.isChecked(), self.workers.value()
         key, bounds = self._key(), self._sol_bounds()
+        self.run_params = self._run_params()
         retry_refused = self.act_retry.isChecked()
         if retry_refused:
             self.act_retry.setChecked(False)      # one run only
@@ -998,6 +1163,7 @@ class MainWindow(QMainWindow):
         self.summary.setVisible(False)
         self.problems_btn.setVisible(False)
         self.speed_samples.clear()
+        self.pos = {}
         self.run_started, self.run_ended = time.time(), 0.0
         self._log(f"=== Download started {time.strftime('%H:%M')}: {', '.join(rovers)}"
                   + (" (new sols only)" if new_only else " (checking existing sols for gaps)"))
@@ -1024,10 +1190,97 @@ class MainWindow(QMainWindow):
 
         self._run_task("download", work)
 
+    def _resume_download(self, cp: dict) -> None:
+        params = cp["params"]
+        dest = cp["dest"]
+        if not self._ensure_folder(dest):
+            return
+        self._save_settings()
+        self._save_key()
+        rovers, new_only = params["rovers"], params["new_only"]
+        cameras = {r: set(c) for r, c in params["cameras"].items()} if params["cameras"] else None
+        bounds = tuple(params["bounds"])
+        key, workers = self._key(), self.workers.value()
+        self.run_params = params
+        self.report = report_from_dict(cp["report"])
+        report = self.report
+        self.summary.setVisible(False)
+        self.problems_btn.setVisible(False)
+        self.speed_samples.clear()
+        self.pos = {"rover": cp["rover"], "rover_index": cp["rover_index"], "sol": cp["sol"],
+                    "sol_min": cp["sol_min"]}
+        self.run_started, self.run_ended = time.time() - cp.get("elapsed", 0), 0.0
+        self._log(f"=== Download resumed {time.strftime('%H:%M')} at {cp['rover']} sol {cp['sol']:,}")
+
+        def work():
+            client = self._client(key)
+            if not self.rover_info:
+                self.rover_info = {r.name: {"max_sol": r.max_sol, "cameras": list(r.cameras)}
+                                   for r in client.rovers()}
+            unavailable = Unavailable(UNAVAILABLE_PATH)
+            scraper = Scraper(client, dest, log=lambda m: self._post("log", m), cancel=self.cancel,
+                              unavailable=unavailable, workers=workers, cameras=cameras,
+                              progress=lambda e: self._post("progress", e))
+            for i, rover in enumerate(rovers, 1):
+                if self.cancel.is_set() or i < cp["rover_index"]:
+                    continue
+                lo, hi = self._sol_range(rover, bounds)
+                self._post("progress", {"event": "rover_index", "index": i, "count": len(rovers)})
+                if i == cp["rover_index"]:
+                    self._post("log", f"== {rover}: resuming at sol {cp['sol']:,} (sols {cp['sol_min']}..{hi})")
+                    scraper.run(rover, cp["sol_min"], hi, report, resume_from=cp["sol"])
+                else:
+                    self._post("log", f"== {rover}: sols {lo}..{hi}" + (" (new sols only)" if new_only else ""))
+                    scraper.run(rover, lo, hi, report, new_only=new_only)
+            unavailable.save()
+            self.tracker.save()
+            return report
+
+        self._clear_checkpoint()
+        self._run_task("download", work)
+
+    # ---- pause checkpoint --------------------------------------------------------------------------------
+
+    def _save_checkpoint(self) -> None:
+        if not self.pos.get("rover") or self.pos.get("sol") is None or self.report is None:
+            return
+        cp = {"params": self.run_params, "dest": self.run_params["folder"], "rover": self.pos["rover"],
+              "rover_index": self.pos.get("rover_index", 1), "sol": self.pos["sol"],
+              "sol_min": self.pos.get("sol_min", 0), "index": self.progress_state.get("index", 0),
+              "total": self.progress_state.get("total", 0), "elapsed": time.time() - self.run_started,
+              "report": report_to_dict(self.report), "saved_at": time.time()}
+        save_checkpoint(cp)
+        self.checkpoint = cp
+
+    def _clear_checkpoint(self) -> None:
+        self.checkpoint = None
+        try:
+            os.remove(PAUSE_PATH)
+        except FileNotFoundError:
+            pass
+        self._validate()
+
+    def _show_paused_state(self) -> None:
+        cp = self.checkpoint
+        total = cp.get("total") or 0
+        where = f"Paused · {cp['rover']} sol {cp['sol']:,}"
+        if total:
+            where += f" ({cp.get('index', 0):,} of {total:,})"
+            self.bar.setValue(int(1000 * cp.get("index", 0) / total))
+        self.phase.setText(where + " · click Resume to continue")
+        self.report = report_from_dict(cp["report"])
+        self.run_ended = time.time()
+        self.run_started = self.run_ended - cp.get("elapsed", 0)
+        self._update_counters()
+        self._validate()
+
     def _quick_scan(self) -> None:
-        self._run_scan(full=False)
+        if self._ensure_folder():
+            self._run_scan(full=False)
 
     def _full_check(self) -> None:
+        if not self._ensure_folder():
+            return
         rovers = self._selected_rovers()
         existing = sum((self.store.get(self._folder()).rovers.get(r) or RoverStatus()).sols_on_disk or 0
                        for r in rovers)
@@ -1141,7 +1394,7 @@ class MainWindow(QMainWindow):
     def _on_rovers(self, info: dict) -> None:
         self.api_error = ""
         self.rover_info = info
-        for name in VERIFIED_ROVERS:
+        for name in ALL_ROVERS:
             cams = info.get(name, {}).get("cameras")
             if cams:
                 self.settings.known_cameras[name] = cams
@@ -1158,11 +1411,16 @@ class MainWindow(QMainWindow):
         ps = self.progress_state
         if kind == "rover_index":
             ps["rover_index"], ps["rover_count"] = e["index"], e["count"]
+            self.pos["rover_index"] = e["index"]
         elif kind == "rover":
             ps.update(rover=e["rover"], total=e["total"], index=0, sol=None, camera=None)
             self.rover_started = time.time()
+            if self.mode == "download":
+                self.pos.update(rover=e["rover"], sol_min=e["sol_min"])
         elif kind == "sol":
             ps.update(rover=e["rover"], sol=e["sol"], index=e["index"], total=e["total"], camera=None)
+            if self.mode == "download":
+                self.pos["sol"] = e["sol"]
         elif kind == "camera":
             ps["camera"] = e["camera"]
         elif kind == "scan_start":
@@ -1173,22 +1431,32 @@ class MainWindow(QMainWindow):
 
     def _on_done(self, mode: str, value) -> None:
         cancelled = self.cancel.is_set()
+        paused = mode == "download" and cancelled and self.pausing
         if mode == "download":
             r = value or self.report
             if r is not None:
-                self._show_summary(r, cancelled)
-            if self._folder():
-                self.store.mark_outdated(self._folder())
-            self._log(f"=== Download {'stopped' if cancelled else 'finished'} {time.strftime('%H:%M')}")
+                r.cancelled = False
+                self._show_summary(r, cancelled, paused)
+            if self.run_params.get("folder"):
+                self.store.mark_outdated(self.run_params["folder"])
+            self._log(f"=== Download {'paused' if paused else 'stopped' if cancelled else 'finished'} "
+                      f"{time.strftime('%H:%M')}")
         elif mode in ("scan", "full"):
             self._log(f"=== {'Full check' if mode == 'full' else 'Quick scan'} "
                       f"{'stopped' if cancelled else 'finished'} {time.strftime('%H:%M')}")
         if mode == "download":
             self._update_progress()             # final counter values
             self.run_ended = time.time()
+            if paused:
+                self._save_checkpoint()
+            else:
+                self._clear_checkpoint()
+        self.pausing = False
         self.progress_state = {}
         self._set_mode("idle")
-        if mode in ("download", "scan", "full"):
+        if paused and self.checkpoint:
+            self._show_paused_state()
+        elif mode in ("download", "scan", "full"):
             self.phase.setText("Stopped" if cancelled else "Finished")
             self.bar.setValue(self.bar.value() if cancelled else 1000)
         else:
@@ -1200,6 +1468,9 @@ class MainWindow(QMainWindow):
     def _on_error(self, mode: str, message: str) -> None:
         if mode == "download":
             self.run_ended = time.time()
+            if self.pausing:
+                self._save_checkpoint()
+        self.pausing = False
         self.api_error = message
         self._log(f"ERROR: {message}")
         self.progress_state = {}
@@ -1207,8 +1478,8 @@ class MainWindow(QMainWindow):
         self.phase.setText("Stopped: error")
         QMessageBox.warning(self, "Something went wrong", message)
 
-    def _show_summary(self, r: Report, cancelled: bool) -> None:
-        state = "Stopped" if cancelled else "Finished"
+    def _show_summary(self, r: Report, cancelled: bool, paused: bool = False) -> None:
+        state = "Paused" if paused else "Stopped" if cancelled else "Finished"
         text = (f"<b>{state}.</b> Downloaded {r.downloaded:,} photos; {r.already_present:,} were already on disk; "
                 f"NASA refused {r.newly_unavailable + r.known_unavailable:,}. {r.sols_checked:,} sols checked.")
         if r.problems:
@@ -1413,7 +1684,7 @@ class MainWindow(QMainWindow):
         status = self.store.get(folder) if folder else None
         scanned = [s.scanned_at for s in (status.rovers.values() if status else []) if s.scanned_at]
         has_new = False
-        for rover in VERIFIED_ROVERS:
+        for rover in ALL_ROVERS:
             st = status.rovers.get(rover) if status else None
             st = st or RoverStatus()
             latest = st.latest_sol if st.latest_sol is not None else self.rover_info.get(rover, {}).get("max_sol")
@@ -1444,8 +1715,11 @@ class MainWindow(QMainWindow):
             self.lib_hint.setVisible(True)
         else:
             outdated = status.outdated
-            self.scanned_label.setText(("Out of date · rescan to refresh" if outdated else
+            self.scanned_label.setText(("From before your last download · Quick scan to update" if outdated else
                                         f"Last scanned: {fmt_when(max(scanned))}"))
+            self.scanned_label.setToolTip(
+                "These numbers were counted before your last download, so they don't include the photos it "
+                "added. Click Quick scan to count again." if outdated else "")
             self.scanned_label.setProperty("tone", "warn" if outdated else "")
             repolish(self.scanned_label)
             self.lib_hint.setVisible(False)
@@ -1453,7 +1727,24 @@ class MainWindow(QMainWindow):
     # ---- closing -----------------------------------------------------------------------------------------
 
     def closeEvent(self, event) -> None:
-        if self.mode != "idle":
+        if self.mode == "download":
+            box = QMessageBox(self)
+            box.setWindowTitle("Download in progress")
+            box.setText("A download is running. Pause it so you can resume later, or stop it?\n\n"
+                        "Finished photos are kept either way.")
+            pause_btn = box.addButton("Pause and quit", QMessageBox.ButtonRole.AcceptRole)
+            stop_btn = box.addButton("Stop and quit", QMessageBox.ButtonRole.DestructiveRole)
+            box.addButton(QMessageBox.StandardButton.Cancel)
+            box.exec()
+            if box.clickedButton() not in (pause_btn, stop_btn):
+                event.ignore()
+                return
+            self.pausing = box.clickedButton() is pause_btn
+            self.cancel.set()
+            if self.worker:
+                self.worker.join(timeout=30)
+            self._tick()                     # handle the finished task (writes the pause checkpoint)
+        elif self.mode != "idle":
             answer = QMessageBox.question(self, "Stop and quit?",
                                           "A task is running. Stop it and quit? Finished photos are kept.")
             if answer != QMessageBox.StandardButton.Yes:
