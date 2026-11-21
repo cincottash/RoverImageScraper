@@ -24,7 +24,7 @@ from PySide6.QtGui import (QActionGroup, QColor, QDesktopServices, QFont, QIcon,
                            QPalette)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QGridLayout,
                                QComboBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
-                               QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSpinBox, QToolButton,
+                               QProgressBar, QPushButton, QScrollArea, QSizePolicy, QToolButton,
                                QVBoxLayout, QWidget)
 
 from api import SUPPORTED_ROVERS, ApiError, Cancelled, MarsVistaClient, load_api_key, save_api_key
@@ -36,8 +36,8 @@ from scan import RoverStatus, ScanStore, full_check, quick_scan
 from scraper import Report, Scraper
 from dataclasses import asdict
 from settings import Settings
-from state import (APP_DATA_FILES, Unavailable, chosen_state_dir, copy_app_data, default_state_dir, save_state_dir,
-                   standard_state_dir)
+from state import (APP_DATA_FILES, NO_DATA_FOLDER, Unavailable, chosen_state_dir, copy_app_data, default_state_dir,
+                   keeps_app_data, save_state_dir, session_state_dir, standard_state_dir)
 
 
 
@@ -229,12 +229,11 @@ def apply_theme(app: QApplication, t: dict) -> None:
         QLabel#section {{ color: {t['muted']}; font-size: 8pt; font-weight: 700; letter-spacing: 0.5px;
                          padding-top: 6px; }}
         QLabel#colHead {{ font-weight: 600; }}
-        QLineEdit, QSpinBox {{ background: {t['input']}; border: 1px solid {t['border']}; border-radius: 6px;
+        QLineEdit {{ background: {t['input']}; border: 1px solid {t['border']}; border-radius: 6px;
                               padding: 5px 8px; }}
-        QLineEdit:focus, QSpinBox:focus {{ border: 1px solid {t['accent']}; }}
+        QLineEdit:focus {{ border: 1px solid {t['accent']}; }}
         QLineEdit[missing="true"] {{ border: 1px solid {t['warn_border']}; background: {t['warn_bg']}; }}
-        QLineEdit:disabled, QSpinBox:disabled {{ color: {t['muted']}; }}
-        QSpinBox QLineEdit {{ border: none; padding: 0px; background: transparent; }}
+        QLineEdit:disabled {{ color: {t['muted']}; }}
         QPushButton {{ background: {t['card']}; border: 1px solid {t['border']}; border-radius: 6px;
                       padding: 6px 14px; }}
         QPushButton:hover {{ border-color: {t['accent']}; }}
@@ -418,6 +417,21 @@ def program_location() -> str:
     return sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__)
 
 
+class NumberChoice(QComboBox):
+    """A dropdown of whole numbers with a spin-box-like value()/setValue()."""
+
+    def __init__(self, low: int, high: int):
+        super().__init__()
+        self.low, self.high = low, high
+        self.addItems([str(n) for n in range(low, high + 1)])
+
+    def value(self) -> int:
+        return int(self.currentText())
+
+    def setValue(self, n: int) -> None:
+        self.setCurrentText(str(min(self.high, max(self.low, int(n)))))
+
+
 class SetupDialog(QDialog):
     """First-run setup (and Settings > Change app data folder): where the app keeps its own files and, on first
     run, where photos go. Each can be on a different drive from the program."""
@@ -435,13 +449,26 @@ class SetupDialog(QDialog):
             lay.addWidget(label("Welcome to Rover Image Scraper", "big"))
             lay.addWidget(label("Choose where the app keeps its files. Each can be on any drive, and they don't "
                                 "have to be on the drive the program runs from.", "muted", wrap=True))
-        self.data_edit, self.data_free = self._folder_row(
+        start_dir = standard_state_dir() if first_run or not keeps_app_data() else self.old_dir
+        self.data_edit, self.data_free, self.data_browse = self._folder_row(
             lay, "App data folder",
             "Settings, scan results, Mars Vista request counts and the list of photos NASA refused. A few "
-            "megabytes.", standard_state_dir() if first_run else self.old_dir)
+            "megabytes.", start_dir)
+        self.nokeep_box = QCheckBox("Don't keep app data: start fresh every time the app opens")
+        self.nokeep_box.setChecked(not first_run and not keeps_app_data())
+        self.nokeep_box.toggled.connect(self._refresh)
+        lay.addWidget(self.nokeep_box)
+        self.nokeep_note = label(
+            "Nothing is kept between launches: settings, scan results, Mars Vista request counts and the list of "
+            "photos NASA refused live in a temporary folder that's deleted when the app closes. Because request "
+            "counts start at zero each time, the app can't keep you under Mars Vista's hourly and daily limits "
+            "across restarts, and refused photos are tried again each run. Downloaded photos are always kept.",
+            "muted", wrap=True)
+        self.nokeep_note.setProperty("tone", "warn")
+        lay.addWidget(self.nokeep_note)
         self.photo_edit = self.photo_free = None
         if first_run:
-            self.photo_edit, self.photo_free = self._folder_row(
+            self.photo_edit, self.photo_free, _ = self._folder_row(
                 lay, "Photo folder (optional)",
                 "Where photos are saved. All four rovers come to several hundred gigabytes. You can also choose "
                 "or change this later in the main window.", "")
@@ -459,7 +486,7 @@ class SetupDialog(QDialog):
                         "90 MB); that copy is removed when it closes.")
         lay.addWidget(label(" ".join(info), "muted", wrap=True))
         bb = QDialogButtonBox()
-        ok = bb.addButton("Continue" if first_run else "Copy and restart", QDialogButtonBox.ButtonRole.AcceptRole)
+        ok = bb.addButton("Continue" if first_run else "Save and restart", QDialogButtonBox.ButtonRole.AcceptRole)
         ok.setObjectName("primary")
         bb.addButton("Quit" if first_run else "Cancel", QDialogButtonBox.ButtonRole.RejectRole)
         bb.accepted.connect(self._accept)
@@ -481,7 +508,7 @@ class SetupDialog(QDialog):
         lay.addWidget(label(hint, "muted", wrap=True))
         free = label("", "muted")
         lay.addWidget(free)
-        return edit, free
+        return edit, free, browse
 
     def _browse(self, edit: QLineEdit) -> None:
         start = edit.text().strip() or os.path.expanduser("~")
@@ -492,19 +519,33 @@ class SetupDialog(QDialog):
     def _refresh(self) -> None:
         if not hasattr(self, "copy_box"):            # still being built
             return
+        nokeep = self.keep_nothing()
+        for w in (self.data_edit, self.data_browse):
+            w.setEnabled(not nokeep)
+        self.data_free.setVisible(not nokeep)
+        self.nokeep_note.setVisible(nokeep)
         self.data_free.setText(free_space_text(self.data_edit.text().strip()))
         if self.photo_edit is not None:
             self.photo_free.setText(free_space_text(self.photo_edit.text().strip()))
         same = os.path.normcase(self.data_dir()) == os.path.normcase(os.path.abspath(self.old_dir))
+        self.copy_box.setVisible(self.has_old and not nokeep)
         self.copy_box.setEnabled(not same)
 
+    def keep_nothing(self) -> bool:
+        return self.nokeep_box.isChecked()
+
     def data_dir(self) -> str:
+        if self.keep_nothing():
+            return session_state_dir()
         return os.path.abspath(self.data_edit.text().strip() or ".")
 
     def photo_dir(self) -> str:
         return self.photo_edit.text().strip() if self.photo_edit is not None else ""
 
     def _accept(self) -> None:
+        if self.keep_nothing():
+            self.accept()
+            return
         if not self.data_edit.text().strip():
             QMessageBox.warning(self, "No folder", "Choose a folder for the app's data.")
             return
@@ -518,10 +559,14 @@ class SetupDialog(QDialog):
     def apply(self) -> list[str]:
         """Copy existing data if asked, remember the choice, and point the app at it. Returns files copied."""
         copied = []
-        if self.has_old and self.copy_box.isEnabled() and self.copy_box.isChecked():
-            copied = copy_app_data(self.old_dir, self.data_dir())
-        save_state_dir(self.data_dir())
-        use_state_dir(self.data_dir())
+        if self.keep_nothing():
+            save_state_dir(NO_DATA_FOLDER)          # only this choice is remembered, so setup doesn't repeat
+            use_state_dir(session_state_dir())
+        else:
+            if self.has_old and self.copy_box.isEnabled() and self.copy_box.isChecked():
+                copied = copy_app_data(self.old_dir, self.data_dir())
+            save_state_dir(self.data_dir())
+            use_state_dir(self.data_dir())
         if self.photo_dir():
             s = Settings.load(SETTINGS_PATH)
             s.folder = os.path.normpath(self.photo_dir())
@@ -577,6 +622,9 @@ class MainWindow(QMainWindow):
         self._load_settings_into_widgets()
         self._refresh_library()
         self._validate()
+        if not keeps_app_data():
+            self._log("App data isn't kept between launches; settings and counts start fresh each time "
+                      "(File > Settings > Change app data folder to keep them).")
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
@@ -812,8 +860,7 @@ class MainWindow(QMainWindow):
         al = QHBoxLayout(self.adv)
         al.setContentsMargins(0, 0, 0, 0)
         al.addWidget(label("Parallel downloads"))
-        self.workers = QSpinBox()
-        self.workers.setRange(1, 16)
+        self.workers = NumberChoice(1, 16)       # a dropdown: the style sheet hides a spin box's arrow buttons
         al.addWidget(self.workers)
         al.addStretch()
         self.adv.setVisible(False)

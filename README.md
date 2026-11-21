@@ -133,6 +133,12 @@ remembered for your user, in the Windows registry (`HKCU\Software\RoverImageScra
 `~/.config/RoverImageScraper/data_folder`. The command line uses the same folder. To move it later, use *File > Settings > Change app data folder*: the files are copied (the originals
 are left in place) and the app restarts. Nothing is ever kept in the repo or the photo folder.
 
+To keep nothing between launches, tick *Don't keep app data* in the same window. Settings, scan results, request
+counts and the refused-photo list then live in a temporary folder that's deleted when the app closes, and every
+launch starts fresh (only that choice is remembered, so the setup window doesn't return). The trade-off: Mars
+Vista request counts restart at zero each time, so the app can't keep you under the hourly and daily limits
+across restarts, and refused photos are tried again each run. Downloaded photos are always kept.
+
 ## Command line
 
 Pass the folder you want the photos saved in. It can be on any drive, and it must already exist. In the examples

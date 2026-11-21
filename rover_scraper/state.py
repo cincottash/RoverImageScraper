@@ -3,8 +3,10 @@ completed isn't re-listed and re-downloaded on every run. Stored outside the pho
 only photos."""
 from __future__ import annotations
 
+import atexit
 import json
 import os
+import shutil
 import tempfile
 import time
 from collections import Counter
@@ -69,9 +71,32 @@ def save_state_dir(path: str) -> None:
         winreg.SetValueEx(k, _REG_VALUE, 0, winreg.REG_SZ, path)
 
 
+# Saved instead of a folder when the user chose not to keep app data between launches.
+NO_DATA_FOLDER = "<none>"
+_session_dir: str | None = None
+
+
+def keeps_app_data() -> bool:
+    """False if the user chose to start fresh every launch (nothing kept between runs)."""
+    return chosen_state_dir() != NO_DATA_FOLDER
+
+
+def session_state_dir() -> str:
+    """A temporary app data folder for this run only, deleted when the program exits."""
+    global _session_dir
+    if _session_dir is None:
+        _session_dir = tempfile.mkdtemp(prefix="RoverImageScraper-session-")
+        atexit.register(shutil.rmtree, _session_dir, True)
+    return _session_dir
+
+
 def default_state_dir() -> str:
-    """The app data folder in use: the user's choice if made, else the standard folder."""
-    return chosen_state_dir() or standard_state_dir()
+    """The app data folder in use: the user's choice if made (a temporary one for this run if they chose not to
+    keep app data), else the standard folder."""
+    choice = chosen_state_dir()
+    if choice == NO_DATA_FOLDER:
+        return session_state_dir()
+    return choice or standard_state_dir()
 
 
 def copy_app_data(src: str, dst: str) -> list[str]:
