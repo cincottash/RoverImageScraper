@@ -1538,7 +1538,8 @@ class MainWindow(QMainWindow):
                                   "Tick this to try them all again on the next run.")
 
         theme_options = [("Match operating system", "system")]
-        theme_options += [(g, [(name, key) for group, name, key, _ in THEMES if group == g]) for g in THEME_GROUPS]
+        theme_options += [(g, sorted(((name, key) for group, name, key, _ in THEMES if group == g),
+                                     key=lambda choice: choice[0].casefold())) for g in THEME_GROUPS]
         self._choice_menu(view_m, "Theme", theme_options, "theme", after=self._apply_theme)
         units_m = view_m.addMenu("Units")
         self._choice_menu(units_m, "Data", [("Auto", "auto"), ("KB", "KB"), ("MB", "MB"), ("GB", "GB"),
