@@ -259,12 +259,14 @@ Ubuntu 22.04):
 
 - On every pull request, it builds both, checks that each starts, and keeps them for 14 days as downloads on the
   run's page (*Actions* tab), so changes can be tried before merging. Nothing is published.
-- After every merge into `main` it does the same, so `main` is always checked and the latest `.exe` and AppImage
-  can be downloaded from the newest run without making a release.
-- When a version tag is pushed, it also publishes a release with both attached:
+- After every merge into `main` it does the same, then **publishes a release** with both attached, tagged with
+  the next version: v1.1.1 → v1.1.2 → v1.1.3, and so on. For a bigger step, put `[minor]` (→ v1.2.0) or `[major]`
+  (→ v2.0.0) in the pull request's title. Releases are published one at a time, so quick merges never share a
+  version.
+- A version tag pushed by hand also publishes a release, with exactly that version:
   ```sh
-  git tag v1.1.0
-  git push origin v1.1.0
+  git tag v1.5.0
+  git push origin v1.5.0
   ```
 
 ## Code layout
