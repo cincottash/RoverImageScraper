@@ -4,7 +4,7 @@ Downloads the raw photos taken by NASA's four Mars rovers (**Curiosity**, **Pers
 **Opportunity**) into a tidy folder on your computer. Run it again later and it fetches only what's new or still
 missing, so it can keep a growing collection up to date.
 
-![The Rover Image Scraper desktop app after downloading a few sols of Perseverance and Spirit](.github/screenshot.png)
+![The Rover Image Scraper desktop app in its default dark theme, after downloading a few sols of Perseverance and Spirit](.github/screenshot.png)
 
 It's free and open source (see [License](#license)).
 
@@ -115,12 +115,24 @@ them all again.
   to their defaults); quit.
 - **Download:** Start, Pause and Stop, Quick scan, Full check and Preview (the same as the buttons), and *Retry
   photos NASA refused* on the next run.
-- **View:** the theme (dark by default; also *Match operating system*, then *Space* themes made for this app and
-  *Dark themes* and *Light themes*, including colors from popular editor color schemes; about sixty in all),
-  units for data and speed and how long *Speed* is averaged over, show or hide the activity log, the detailed
-  activity log, and *Reset view options*.
+- **View:** the theme, units for data and speed and how long *Speed* is averaged over, show or hide the activity
+  log, the detailed activity log, and *Reset view options*.
 - **Help:** the Mars Vista website, open the app data folder, report a problem (opens the project's GitHub
   issues), and *About*.
+
+### Themes
+
+The app starts in a dark theme. *View > Theme* has 61: *Match operating system* (light or dark, following your
+system), then three groups, each in alphabetical order:
+
+- **Space:** themes made for this app, such as Mars Day, Martian Dusk, Deep Space, Nebula and Cosmic Latte.
+- **Dark themes:** Dark, High Contrast, and dark versions of popular editor color schemes such as Nord, Dracula,
+  Gruvbox, Tokyo Night and Catppuccin.
+- **Light themes:** Light, Paper, Sepia, and light versions of popular editor color schemes such as Solarized
+  Light, One Light and Rosé Pine Dawn.
+
+Hover over a theme to preview it on the window; click to keep it. Closing the menu without clicking goes back to
+the theme you had.
 
 ## Where your photos go
 
@@ -291,9 +303,9 @@ Ubuntu 22.04) and checks that each starts:
 - **Pull requests:** builds are kept for 14 days as downloads on the run's page (*Actions* tab), so changes can
   be tried before merging. Nothing is published.
 - **Every merge into `main`:** the same, then a release is published with both apps, tagged with the next
-  version (v2.0.0 → v2.0.1 → v2.0.2, and so on). For a bigger step, put `[minor]` or `[major]` in the pull
-  request's title.
-- **A version tag pushed by hand** (`git tag v3.0.0` then `git push origin v3.0.0`) publishes exactly that
+  version (v1.3.0 → v1.3.1 → v1.3.2, and so on). For a bigger step, put `[minor]` (v1.4.0) or `[major]` (v2.0.0)
+  in the pull request's title.
+- **A version tag pushed by hand** (`git tag v2.0.0` then `git push origin v2.0.0`) publishes exactly that
   version.
 
 ## Code layout
@@ -307,7 +319,7 @@ All program code is in `rover_scraper/`:
 - `scan.py`: Library status (quick scan and full check).
 - `ratelimit.py`: counts Mars Vista requests, and the optional download limit.
 - `state.py`: the app data folder, and the photos NASA refuses to serve. `settings.py`: the app's saved settings.
-- `check.svg`: the tick drawn in checkboxes.
+- `check.svg` and `check_dark.svg`: the tick drawn in checkboxes (white, or dark on light accent colors).
 
 Packaging: `packaging/build_exe.py` (Windows), `packaging/build_appimage.py` (Linux), `packaging/make_icon.py` and
 `packaging/icon.svg` (the app icon), and `packaging/requirements-build.txt` (the build tools, pinned).
@@ -324,6 +336,7 @@ It uses [PySide6 / Qt](https://www.qt.io/qt-for-python) (LGPL-3.0), [requests](h
 (Apache-2.0) and [keyring](https://github.com/jaraco/keyring) (MIT). The photos themselves are NASA's (image
 credit: NASA/JPL-Caltech).
 
-Many of the *Dark themes* and *Light themes* use the colors of these open-source color schemes, by their authors: Nord, Dracula,
-Solarized, Gruvbox, One Dark / One Light, Tokyo Night, Catppuccin, Rosé Pine, Everforest, Kanagawa, Ayu,
-Palenight, Night Owl, Cobalt2, Synthwave '84, Tomorrow, Monokai and Zenburn.
+Many of the *Dark themes* and *Light themes* are based on the colors of these open-source color schemes, by their
+authors (adjusted slightly so every theme looks distinct): Nord, Dracula, Solarized, Gruvbox, One Dark / One Light,
+Tokyo Night, Catppuccin, Rosé Pine, Everforest, Kanagawa, Ayu, Palenight, Night Owl, Cobalt2, Synthwave '84,
+Tomorrow, Monokai and Zenburn.
