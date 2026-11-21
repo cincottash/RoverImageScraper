@@ -27,6 +27,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--report", help="write a JSON report to this path")
     p.add_argument("--state-dir", default=default_state_dir(),
                    help="where to remember photos NASA refuses to serve (default: %(default)s)")
+    p.add_argument("--workers", type=int, default=6, help="parallel downloads (default: %(default)s)")
     p.add_argument("--retry-unavailable", action="store_true",
                    help="forget remembered 403/404 photos and try them again")
     return p.parse_args(argv)
@@ -65,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
 
     unavailable = Unavailable(os.path.join(args.state_dir, "unavailable.json"),
                               ignore_existing=args.retry_unavailable)
-    scraper = Scraper(client, args.dest, dry_run=args.dry_run, unavailable=unavailable)
+    scraper = Scraper(client, args.dest, dry_run=args.dry_run, unavailable=unavailable, workers=args.workers)
     report = Report()
     try:
         for rover in rovers:
