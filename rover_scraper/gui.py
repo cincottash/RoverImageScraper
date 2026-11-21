@@ -20,7 +20,7 @@ import traceback
 from PySide6.QtCore import QEvent, Qt, QTimer, QUrl
 from PySide6.QtGui import QActionGroup, QColor, QDesktopServices, QFont, QIntValidator, QKeySequence, QPalette
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QGridLayout,
-                               QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
+                               QComboBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
                                QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSpinBox, QToolButton,
                                QVBoxLayout, QWidget)
 
@@ -28,7 +28,7 @@ from api import SUPPORTED_ROVERS, ApiError, Cancelled, MarsVistaClient, load_api
 from pds import PdsClient, RequestCounter, RoverSources, is_pds_rover, latest_sol
 from download import NASA_STATUS
 from plan import last_sol_on_disk
-from ratelimit import RequestTracker
+from ratelimit import PERIODS, FileLimiter, RequestTracker
 from scan import RoverStatus, ScanStore, full_check, quick_scan
 from scraper import Report, Scraper
 from dataclasses import asdict
@@ -395,6 +395,7 @@ class MainWindow(QMainWindow):
         # A paused download, kept in memory only: it lasts until Stop, a new Start, or closing the app.
         self.checkpoint: dict | None = None
         self.pds_requests = RequestCounter()      # NASA archive requests this session (no quota)
+        self.limiter: FileLimiter | None = None   # the user's download limit, kept across Pause/Resume
         remove_old_pause_file()
         self._loading = False
         # Camera selection to bring back when an unticked rover is ticked again (and what's saved for it).
@@ -612,6 +613,24 @@ class MainWindow(QMainWindow):
         row.addStretch()
         lay.addLayout(row)
         lay.addWidget(label("Leave blank for all sols.", "muted"))
+        lim = QHBoxLayout()
+        self.limit_box = QCheckBox("Limit downloads to")
+        self.limit_box.setToolTip("Download at most this many photos in any rolling minute, hour or day. When the "
+                                  "limit is reached the download waits, then continues by itself.")
+        self.limit_box.toggled.connect(self._validate)
+        self.limit_files = QSpinBox()
+        self.limit_files.setRange(1, 1_000_000)
+        self.limit_files.setGroupSeparatorShown(True)
+        self.limit_files.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)    # a plain number box
+        self.limit_files.setFixedWidth(95)
+        self.limit_period = QComboBox()
+        self.limit_period.addItems(list(PERIODS))
+        lim.addWidget(self.limit_box)
+        lim.addWidget(self.limit_files)
+        lim.addWidget(label("photos per"))
+        lim.addWidget(self.limit_period)
+        lim.addStretch()
+        lay.addLayout(lim)
         self.adv_toggle = link_button("Advanced ▸")
         self.adv_toggle.clicked.connect(self._toggle_advanced)
         lay.addWidget(self.adv_toggle)
@@ -625,7 +644,8 @@ class MainWindow(QMainWindow):
         al.addStretch()
         self.adv.setVisible(False)
         lay.addWidget(self.adv)
-        self.locked += [self.check_existing, self.sol_from, self.sol_to, self.workers, self.adv_toggle]
+        self.locked += [self.check_existing, self.sol_from, self.sol_to, self.workers, self.adv_toggle,
+                        self.limit_box]
         self.left_col.addWidget(frame)
 
     def _build_library_card(self) -> QFrame:
@@ -810,6 +830,9 @@ class MainWindow(QMainWindow):
         self.sol_from.setText(s.sol_from)
         self.sol_to.setText(s.sol_to)
         self.workers.setValue(s.workers)
+        self.limit_box.setChecked(s.limit_on)
+        self.limit_files.setValue(max(1, s.limit_files))
+        self.limit_period.setCurrentText(s.limit_period if s.limit_period in PERIODS else "hour")
         self._loading = False
         self._update_camera_toggles()
         self._update_library_columns()
@@ -829,6 +852,8 @@ class MainWindow(QMainWindow):
         s.check_existing = self.check_existing.isChecked()
         s.sol_from, s.sol_to = self.sol_from.text().strip(), self.sol_to.text().strip()
         s.workers = self.workers.value()
+        s.limit_on = self.limit_box.isChecked()
+        s.limit_files, s.limit_period = self.limit_files.value(), self.limit_period.currentText()
 
     def _save_settings(self) -> None:
         self._collect_settings()
@@ -894,6 +919,8 @@ class MainWindow(QMainWindow):
         self.open_btn.setEnabled(folder_given)
         for w in self.locked:
             w.setEnabled(idle)
+        for w in (self.limit_files, self.limit_period):
+            w.setEnabled(idle and self.limit_box.isChecked())
         if hasattr(self, "act_choose"):
             self.act_choose.setEnabled(idle)
 
@@ -1132,6 +1159,18 @@ class MainWindow(QMainWindow):
         self.phase.setText("Pausing… finishing current photos")
         self._validate()
 
+    def _make_limiter(self) -> FileLimiter | None:
+        """The download limit chosen in Options, or None. The same limiter is reused while its numbers stay the
+        same, so pausing and resuming (or starting again) doesn't reset what has already been counted."""
+        if not self.limit_box.isChecked():
+            self.limiter = None
+            return None
+        n, period = self.limit_files.value(), self.limit_period.currentText()
+        if self.limiter is None or (self.limiter.max_files, self.limiter.period) != (n, PERIODS[period]):
+            self.limiter = FileLimiter(n, PERIODS[period], cancelled_error=Cancelled)
+            self.limiter.label = f"{n:,} photos per {period}"
+        return self.limiter
+
     def _ensure_folder(self, folder: str | None = None) -> bool:
         """True if the photo folder exists, or the user agreed to create it and it was created."""
         folder = folder or self._folder()
@@ -1239,6 +1278,7 @@ class MainWindow(QMainWindow):
         self._save_key()
         dest, rovers, cameras = self._folder(), self._selected_rovers(), self._camera_filter()
         new_only, workers = not self.check_existing.isChecked(), self.workers.value()
+        limiter = self._make_limiter()
         key, bounds = self._key(), self._sol_bounds()
         self.run_params = self._run_params()
         retry_refused = self.act_retry.isChecked()
@@ -1261,9 +1301,11 @@ class MainWindow(QMainWindow):
                 self.rover_info = {r.name: {"max_sol": latest_sol(r.name, r.max_sol), "cameras": list(r.cameras)}
                                    for r in client.rovers()}
             unavailable = Unavailable(UNAVAILABLE_PATH, ignore_existing=retry_refused)
+            if limiter is not None:
+                limiter.cancel = self.cancel          # this run's Stop/Pause also ends a limit wait
             scraper = Scraper(client, dest, log=lambda m: self._post("log", m), cancel=self.cancel,
                               unavailable=unavailable, workers=workers, cameras=cameras,
-                              progress=lambda e: self._post("progress", e))
+                              progress=lambda e: self._post("progress", e), limiter=limiter)
             for i, rover in enumerate(rovers, 1):
                 if self.cancel.is_set():
                     break
@@ -1288,6 +1330,7 @@ class MainWindow(QMainWindow):
         cameras = {r: set(c) for r, c in params["cameras"].items()} if params["cameras"] else None
         bounds = tuple(params["bounds"])
         key, workers = self._key(), self.workers.value()
+        limiter = self._make_limiter()
         self.run_params = params
         self.report = report_from_dict(cp["report"])
         report = self.report
@@ -1305,9 +1348,11 @@ class MainWindow(QMainWindow):
                 self.rover_info = {r.name: {"max_sol": latest_sol(r.name, r.max_sol), "cameras": list(r.cameras)}
                                    for r in client.rovers()}
             unavailable = Unavailable(UNAVAILABLE_PATH)
+            if limiter is not None:
+                limiter.cancel = self.cancel          # this run's Stop/Pause also ends a limit wait
             scraper = Scraper(client, dest, log=lambda m: self._post("log", m), cancel=self.cancel,
                               unavailable=unavailable, workers=workers, cameras=cameras,
-                              progress=lambda e: self._post("progress", e))
+                              progress=lambda e: self._post("progress", e), limiter=limiter)
             for i, rover in enumerate(rovers, 1):
                 if self.cancel.is_set() or i < cp["rover_index"]:
                     continue
@@ -1654,9 +1699,19 @@ class MainWindow(QMainWindow):
         self.day_lbl.setText(f"{usage.day:,} / {usage.daily_limit:,}")
         self.pds_lbl.setText(f"{self.pds_requests.count:,} requests this session · no limit")
 
+        lim = self.limiter
+        limit_wait = (self.mode == "download" and not self.cancel.is_set() and lim is not None
+                      and lim.waiting_until is not None and lim.waiting_until > time.time())
         waiting = usage.waiting and self.mode != "idle"
         nasa_busy = NASA_STATUS.busy_recently() and self.mode == "download"
-        if waiting:
+        if limit_wait:
+            left = lim.waiting_until - time.time()
+            resume = time.strftime("%H:%M", time.localtime(lim.waiting_until))
+            self.banner_title.setText(f"⏸  Your download limit is reached ({lim.label}). "
+                                      f"Resumes in {fmt_duration(left)}, about {resume}.")
+            self.banner_text.setText("Set under Options. This isn't an error: the download continues "
+                                     "automatically.")
+        elif waiting:
             left = usage.waiting_until - time.time()
             resume = time.strftime("%H:%M", time.localtime(usage.waiting_until))
             self.banner_title.setText(f"⏸  Waiting for Mars Vista rate limit ({usage.wait_reason}). "
@@ -1666,9 +1721,9 @@ class MainWindow(QMainWindow):
         elif nasa_busy:
             self.banner_title.setText("⏸  NASA's image servers are busy. Retrying automatically.")
             self.banner_text.setText("Some downloads are being retried. No action needed.")
-        self.banner.setVisible(waiting or nasa_busy)
-        if self.bar.property("paused") != waiting:
-            self.bar.setProperty("paused", waiting)
+        self.banner.setVisible(limit_wait or waiting or nasa_busy)
+        if self.bar.property("paused") != (waiting or limit_wait):
+            self.bar.setProperty("paused", waiting or limit_wait)
             repolish(self.bar)
 
         if self.mode == "idle" and not self._key():

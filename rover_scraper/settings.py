@@ -22,6 +22,9 @@ class Settings:
     sol_from: str = ""
     sol_to: str = ""
     workers: int = 6
+    limit_on: bool = False               # the user's own download limit (Options > Advanced)
+    limit_files: int = 500
+    limit_period: str = "hour"           # minute | hour | day
     confirmed_folders: list[str] = field(default_factory=list)          # folders the user OK'd adding to
     # View menu
     data_unit: str = "auto"              # auto | KB | MB | GB | TB

@@ -5,11 +5,12 @@ import argparse
 import json
 import os
 import sys
+import threading
 import time
 
 from api import SUPPORTED_ROVERS, ApiError, MarsVistaClient, load_api_key
 from pds import PdsClient, RequestCounter, RoverSources, is_pds_rover
-from ratelimit import RequestTracker
+from ratelimit import PERIODS, FileLimiter, RequestTracker
 from scraper import Report, Scraper
 from state import Unavailable, default_state_dir
 
@@ -34,6 +35,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--new-only", action="store_true",
                    help="only download sols after the last one on disk; don't check existing sols for gaps")
     p.add_argument("--cameras", help="comma-separated camera names to include (default: all)")
+    p.add_argument("--max-files", type=int, help="download at most this many photos per --per period")
+    p.add_argument("--per", choices=list(PERIODS), default="hour",
+                   help="period for --max-files (default: %(default)s)")
     return p.parse_args(argv)
 
 
@@ -46,6 +50,9 @@ def _print_wait(seconds: float, reason: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.max_files is not None and args.max_files < 1:
+        print("Error: --max-files must be at least 1", file=sys.stderr)
+        return 2
     if not os.path.isdir(args.dest):
         print(f"Error: folder {args.dest} does not exist", file=sys.stderr)
         return 2
@@ -78,8 +85,17 @@ def main(argv: list[str] | None = None) -> int:
     cameras = {r.name: wanted for r in rovers} if wanted else None
     pds_requests = RequestCounter()
     sources = RoverSources(client, PdsClient(log=lambda m: print(m, flush=True), counter=pds_requests))
+    cancel = threading.Event()
+    limiter = None
+    if args.max_files:
+        def _print_limit_wait(seconds: float) -> None:
+            resume = time.strftime("%H:%M", time.localtime(time.time() + seconds))
+            print(f"Download limit reached ({args.max_files:,} photos per {args.per}): waiting until about "
+                  f"{resume}. No action needed.", flush=True)
+        limiter = FileLimiter(args.max_files, PERIODS[args.per], cancel=cancel, on_wait=_print_limit_wait)
+        print(f"Download limit: at most {args.max_files:,} photos per {args.per}.")
     scraper = Scraper(sources, args.dest, dry_run=args.dry_run, unavailable=unavailable, workers=args.workers,
-                      cameras=cameras)
+                      cameras=cameras, limiter=limiter, cancel=cancel)
     report = Report()
     try:
         for rover in rovers:

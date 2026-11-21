@@ -54,9 +54,10 @@ class Scraper:
                  cancel: threading.Event | None = None, fetch=fetch_bytes, head=head_size,
                  unavailable: Unavailable | None = None, workers: int = 6,
                  progress: Callable[[dict], None] | None = None,
-                 cameras: dict[str, set[str]] | None = None):
+                 cameras: dict[str, set[str]] | None = None, limiter=None):
         """progress(event) receives dicts such as {"event": "sol", "rover", "sol", "index", "total"} for the GUI.
-        cameras maps a rover name to the camera names to include; a rover not in the map gets all cameras."""
+        cameras maps a rover name to the camera names to include; a rover not in the map gets all cameras.
+        limiter (ratelimit.FileLimiter) caps how many photos are downloaded per minute/hour/day."""
         self.client, self.dest, self.dry_run, self.log = client, dest, dry_run, log
         self.workers = max(1, workers)
         self.http = http or make_session(self.workers)
@@ -65,6 +66,7 @@ class Scraper:
         self.unavailable = unavailable or Unavailable(None)
         self.progress = progress or (lambda event: None)
         self.cameras = cameras or {}
+        self.limiter = limiter
 
     def run(self, rover: str, sol_min: int, sol_max: int, report: Report | None = None,
             new_only: bool = False, resume_from: int | None = None) -> Report:
@@ -155,15 +157,19 @@ class Scraper:
         At most 2 x workers results are held at once, so a big folder doesn't fill memory."""
         it = iter(items)
         with ThreadPoolExecutor(self.workers) as ex:
-            window = deque((x, ex.submit(_call, fn, self.http, x.url))
-                           for x in itertools.islice(it, self.workers * 2))
-            while window:
-                item, fut = window.popleft()
-                result = fut.result()
-                nxt = next(it, None)
-                if nxt is not None:
-                    window.append((nxt, ex.submit(_call, fn, self.http, nxt.url)))
-                yield item, result
+            try:
+                window = deque((x, ex.submit(_call, fn, self.http, x.url))
+                               for x in itertools.islice(it, self.workers * 2))
+                while window:
+                    item, fut = window.popleft()
+                    result = fut.result()
+                    nxt = next(it, None)
+                    if nxt is not None:
+                        window.append((nxt, ex.submit(_call, fn, self.http, nxt.url)))
+                    yield item, result
+            except KeyboardInterrupt:
+                self.cancel.set()     # wake threads waiting on the download limit, so Ctrl+C quits promptly
+                raise
 
     def _do_camera(self, plan: CameraPlan, report: Report) -> None:
         where = f"{plan.rover}/{plan.sol}/{plan.camera}"
@@ -198,7 +204,7 @@ class Scraper:
 
         os.makedirs(plan.folder, exist_ok=True)
         index = plan.next_index
-        results = self._ordered_parallel(self.fetch, todo)
+        results = self._ordered_parallel(self._limited_fetch, todo)
         try:
             for photo, result in results:
                 if self.cancel.is_set():
@@ -219,6 +225,12 @@ class Scraper:
                 report.bytes_saved += len(result)
         finally:
             results.close()
+
+    def _limited_fetch(self, session, url: str) -> bytes:
+        """Download one photo, first waiting for the user's download limit if one is set."""
+        if self.limiter is not None:
+            self.limiter.acquire()
+        return self.fetch(session, url)
 
     def _drop_by_size(self, folder: str, photos: list[Photo], report: Report) -> list[Photo]:
         """Cheap first pass for FILL: a listed photo whose remote size (HEAD, no download) equals the size of a

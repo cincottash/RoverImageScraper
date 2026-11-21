@@ -141,3 +141,58 @@ class RequestTracker:
             if dropped > excess:
                 return max(1.0, (m + window_minutes) * 60 - now)
         return 60.0
+
+
+# ---- user's own download limit ---------------------------------------------------------------------------
+
+PERIODS = {"minute": 60, "hour": 3600, "day": 86400}
+
+
+class FileLimiter:
+    """At most max_files photo downloads in any rolling period (e.g. 500 per hour), chosen by the user.
+
+    acquire() is called before each photo download, from the download threads. When the limit is reached it
+    waits until the oldest download in the window is a full period old. cancel interrupts the wait (raising
+    the given exception), and on_wait(seconds) is called when a wait starts so the window can show it.
+    Only actual photo downloads count; size checks and folder listings don't.
+    """
+
+    def __init__(self, max_files: int, period_seconds: float, cancel: threading.Event | None = None,
+                 on_wait=None, clock=time.time, cancelled_error: type[Exception] = RuntimeError):
+        if max_files < 1 or period_seconds <= 0:
+            raise ValueError("max_files must be at least 1 and the period positive")
+        self.max_files, self.period = max_files, period_seconds
+        self.cancel = cancel or threading.Event()
+        self.on_wait = on_wait or (lambda seconds: None)
+        self.clock, self.cancelled_error = clock, cancelled_error
+        self._lock = threading.Lock()
+        self._times: list[float] = []          # start times of downloads in the current window, oldest first
+        self.waiting_until: float | None = None
+        self._announced: float | None = None      # end of the wait already reported, so it's said only once
+
+    def acquire(self) -> None:
+        while True:
+            announce = False
+            with self._lock:
+                now = self.clock()
+                cutoff = now - self.period
+                while self._times and self._times[0] <= cutoff:
+                    self._times.pop(0)
+                if len(self._times) < self.max_files:
+                    self._times.append(now)
+                    self.waiting_until = None
+                    return
+                until = self._times[0] + self.period
+                self.waiting_until = until
+                if self._announced is None or until > self._announced + 1:
+                    self._announced, announce = until, True
+            if announce:
+                self.on_wait(until - now)
+            if self.cancel.wait(min(1.0, max(0.05, until - now))):
+                self.waiting_until = None
+                raise self.cancelled_error("stopped while waiting for the download limit")
+
+    def in_window(self) -> int:
+        with self._lock:
+            cutoff = self.clock() - self.period
+            return sum(1 for t in self._times if t > cutoff)

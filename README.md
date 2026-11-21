@@ -81,6 +81,10 @@ What the window offers:
 - **Check existing sols for missing photos:** when ticked, the run starts at sol 0 and fills gaps in sols you
   already have (slower). Untick it to only download sols after the last one in the folder.
 - **Sols from/to:** limit the run to a range of sols. Leave blank for all.
+- **Limit downloads to N photos per minute/hour/day:** an optional cap you choose, for example to go easy on a
+  shared connection. It's a rolling window: with 500 per hour, no 60-minute stretch ever has more than 500
+  photo downloads. When the cap is reached, an amber banner shows when downloading resumes, and it carries on by
+  itself. Pause, Resume and Stop work during the wait, and pausing doesn't reset the count.
 - **Library status:** sols, photos and size on disk, the latest sol available, and how many new sols there are.
   For Spirit and Opportunity the number of new photos isn't known until each sol is looked at, so only sols are
   shown.
@@ -135,6 +139,8 @@ To run from any other folder, use full paths to both `python.exe` (inside `.venv
 | `--allow-existing` | Required to add to a folder that already contains rover data |
 | `--new-only` | Only download sols after the last one in the folder; don't check existing sols for gaps |
 | `--cameras` | Comma-separated camera names to include, e.g. `NAVCAM,MAST` (default: all) |
+| `--max-files N` | Download at most N photos per period (a rolling window); waits, then continues |
+| `--per` | The period for `--max-files`: `minute`, `hour` (default) or `day` |
 | `--workers` | Parallel downloads (default 6) |
 | `--report <file>` | Save a JSON summary of the run |
 | `--retry-unavailable` | Retry photos NASA refused on earlier runs (see below) |
