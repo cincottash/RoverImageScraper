@@ -20,7 +20,8 @@ import time
 import traceback
 
 from PySide6.QtCore import QEvent, QProcess, Qt, QTimer, QUrl
-from PySide6.QtGui import QActionGroup, QColor, QDesktopServices, QFont, QIntValidator, QKeySequence, QPalette
+from PySide6.QtGui import (QActionGroup, QColor, QDesktopServices, QFont, QIcon, QIntValidator, QKeySequence,
+                           QPalette)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QGridLayout,
                                QComboBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
                                QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSpinBox, QToolButton,
@@ -54,6 +55,9 @@ def use_state_dir(path: str) -> None:
 use_state_dir(default_state_dir())
 
 AVG_PHOTO_MB = 0.2          # observed average across Curiosity and Perseverance downloads
+# Where keyring keeps the API key on this system, for the window's wording.
+KEY_STORE = ("Windows Credential Manager" if os.name == "nt" else
+             "the macOS Keychain" if sys.platform == "darwin" else "your system's keyring")
 ALL_ROVERS = SUPPORTED_ROVERS
 MAIN_ROVERS = ("Curiosity", "Perseverance")          # always shown in Library status
 
@@ -159,6 +163,16 @@ def system_is_dark(app: QApplication) -> bool:
         return app.styleHints().colorScheme() == Qt.ColorScheme.Dark
     except AttributeError:      # Qt older than 6.5
         return False
+
+
+def app_icon_path() -> str | None:
+    """The window icon: bundled next to the code in the packaged app, in packaging/ when run from source."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for path in (os.path.join(getattr(sys, "_MEIPASS", here), "icon.svg"),
+                 os.path.join(here, os.pardir, "packaging", "icon.svg")):
+        if os.path.isfile(path):
+            return path
+    return None
 
 
 def _check_icon() -> str:
@@ -439,8 +453,8 @@ class SetupDialog(QDialog):
         self.copy_box.setVisible(has_old)
         lay.addWidget(self.copy_box)
         info = [f"The program itself runs from {program_location()}.",
-                "Your Mars Vista API key is kept in Windows Credential Manager, not in a file."]
-        if getattr(sys, "frozen", False):
+                f"Your Mars Vista API key is kept in {KEY_STORE}, not in a file."]
+        if getattr(sys, "frozen", False) and os.name == "nt":       # the single .exe; an AppImage doesn't unpack
             info.append("Each time it starts, the program unpacks itself into Windows' temporary folder (about "
                         "90 MB); that copy is removed when it closes.")
         lay.addWidget(label(" ".join(info), "muted", wrap=True))
@@ -702,7 +716,7 @@ class MainWindow(QMainWindow):
         row.addWidget(self.show_key)
         lay.addLayout(row)
         hint = label('Get a free key at <a href="https://marsvista.dev">marsvista.dev</a>. '
-                     "Saved in Windows Credential Manager.", "muted", wrap=True)
+                     f"Saved in {KEY_STORE}.", "muted", wrap=True)
         hint.setOpenExternalLinks(True)
         lay.addWidget(hint)
         self.locked += [self.key_edit]
@@ -1244,7 +1258,8 @@ class MainWindow(QMainWindow):
         self._choice_menu(view_m, "Speed averaged over", [(f"{n} seconds", n) for n in SPEED_WINDOWS],
                           "speed_window")
         view_m.addSeparator()
-        self._choice_menu(view_m, "Theme", [("Match Windows", "system"), ("Light", "light"), ("Dark", "dark")],
+        match_system = "Match Windows" if os.name == "nt" else "Match system"
+        self._choice_menu(view_m, "Theme", [(match_system, "system"), ("Light", "light"), ("Dark", "dark")],
                           "theme", after=self._apply_theme)
         self.act_log = view_m.addAction("Show activity log")
         self.act_log.setCheckable(True)
@@ -2150,6 +2165,9 @@ def main() -> int:
     app.setApplicationName("Rover Image Scraper")
     app.setStyle("Fusion")
     app.setFont(QFont("Segoe UI", 10))
+    icon = app_icon_path()
+    if icon:
+        app.setWindowIcon(QIcon(icon))
 
     if chosen_state_dir() is None:                  # first run: ask where the app's files go
         apply_theme(app, DARK if system_is_dark(app) else LIGHT)

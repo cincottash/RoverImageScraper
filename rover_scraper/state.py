@@ -13,24 +13,38 @@ PERMANENT_STATUSES = {403, 404, 410}
 
 
 # ---- where the app keeps its own files (settings, scan results, request counts, refused photos) -------------
-# The user picks this folder on first run. The choice itself is remembered in the Windows registry under the
-# current user (HKCU\Software\RoverImageScraper, value DataFolder), since the app must know it before it can
-# open any file. On other systems the standard folder is used.
+# The user picks this folder on first run. The choice itself has to be stored somewhere the app can find before
+# it opens any file: on Windows the registry under the current user (HKCU\Software\RoverImageScraper, value
+# DataFolder); on Linux and macOS a one-line file, ~/.config/RoverImageScraper/data_folder.
 
 APP_DATA_FILES = ("settings.json", "scans.json", "requests.json", "unavailable.json")
 _REG_KEY, _REG_VALUE = r"Software\RoverImageScraper", "DataFolder"
 
 
 def standard_state_dir() -> str:
-    """The suggested folder: %LOCALAPPDATA%\RoverImageScraper (~/.local/share/RoverImageScraper elsewhere)."""
-    base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), ".local", "share")
+    """The suggested folder: %LOCALAPPDATA%\\RoverImageScraper on Windows, ~/.local/share/RoverImageScraper
+    elsewhere (or $XDG_DATA_HOME/RoverImageScraper)."""
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
+    else:
+        base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
     return os.path.join(base, "RoverImageScraper")
+
+
+def _choice_file() -> str:
+    """Linux/macOS: where the chosen data folder is written ($XDG_CONFIG_HOME or ~/.config)."""
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "RoverImageScraper", "data_folder")
 
 
 def chosen_state_dir() -> str | None:
     """The folder the user chose at first-run setup, or None if setup hasn't been done."""
     if os.name != "nt":
-        return None
+        try:
+            with open(_choice_file(), encoding="utf-8") as f:
+                return f.read().strip() or None
+        except OSError:
+            return None
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _REG_KEY) as k:
@@ -41,8 +55,14 @@ def chosen_state_dir() -> str | None:
 
 
 def save_state_dir(path: str) -> None:
-    """Remember the user's choice of app data folder (Windows registry, current user only)."""
+    """Remember the user's choice of app data folder (Windows registry for the current user; elsewhere a one-line
+    file in ~/.config/RoverImageScraper)."""
     if os.name != "nt":
+        target = _choice_file()
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target + ".part", "w", encoding="utf-8") as f:
+            f.write(path + "\n")
+        os.replace(target + ".part", target)
         return
     import winreg
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _REG_KEY) as k:
