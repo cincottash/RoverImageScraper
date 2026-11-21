@@ -65,9 +65,15 @@ What the window offers:
 - **Sols from/to:** limit the run to a range of sols. Leave blank for all.
 - **Library status:** sols, photos and size on disk, the latest sol available, and how many new sols there are.
   *Full check* also finds gaps in existing sols; it uses about one API request per sol on disk, so it asks first.
+- **Progress:** photos and data downloaded, current speed (averaged over a few seconds), average speed, photo
+  rate, elapsed time and an estimate of the time left.
 - **API usage:** how many Mars Vista requests have been used this hour and today, counted by the app. When the
   limit is reached, an amber banner shows a countdown, and the download carries on by itself afterwards.
 - **Activity:** the same log the command line prints.
+- **Menus:**
+  - *View*: units for data (KB/MB/GB/TB) and speed (KB/s, MB/s, Mbit/s), how long the speed is averaged over,
+    light/dark theme, and showing or hiding the activity log.
+  - *Settings*: retry photos NASA refused on the next run, and open the settings folder.
 
 Settings, scan results and the request counts are saved in `%LOCALAPPDATA%\RoverImageScraper\` (on macOS/Linux,
 `~/.local/share/RoverImageScraper/`), never in the repo or the photo folder.
