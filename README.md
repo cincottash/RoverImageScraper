@@ -101,4 +101,3 @@ The destination folder must already exist.
 - `rover_scraper/cli.py`: the command line.
 - `tools/`: read-only scripts used to check the output against an existing photo folder (comparison by hash,
   rehearsal checks, dry-run summary).
-- `HANDOFF.md`: notes on how compatibility with the old API's output was verified.

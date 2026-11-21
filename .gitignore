@@ -16,3 +16,6 @@ scratch/
 # Local-only test suite (kept out of the repo)
 tests/
 requirements-dev.txt
+
+# Local-only notes
+HANDOFF.md
