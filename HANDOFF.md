@@ -118,6 +118,34 @@ Old partial or changed sols are left alone (the old behaviour) unless steps B an
 - Duplicates: both sides contain photos with identical bytes (e.g. Curiosity 1000 MAST dump files 14 and 570).
 - No `X-RateLimit-*` headers were seen on responses so far.
 
+### Decisions after the sols 0-10 test (Nov 20, 2026)
+The sols 0-10 test showed that Mars Vista's ID order is **not** always the old API's order, especially around
+landing. Every photo present on both sides had identical bytes, though. The user decided:
+- **Order inside a camera folder doesn't matter, and completeness is judged by counts.**
+- **Download only what's missing**, including new cameras in old sols (LCAM, PIXL_MCC, SHERLOC_ACI, CACHECAM, plus
+  SUPERCAM_RMI where it was absent) and photos the old API never had (e.g. Perseverance sol 9 NAVCAM_LEFT: 70 on
+  disk, 134 listed).
+- Curiosity gets full-size photos only.
+
+Incremental check, per sol:
+1. One manifest request per rover. If the sol's camera folders and total exactly match it, skip with no request.
+2. Otherwise one v2 stats request gives per-camera counts. If every camera has at least that many files, skip.
+   (A sol-level total isn't enough: extra old files in one camera can hide a short camera, as in Perseverance
+   sol 2.)
+3. Otherwise list the sol (v1). A camera that's short is filled with the listed photos whose bytes aren't already
+   in the folder, numbered after the highest existing file. Nothing is renamed or overwritten.
+
+NASA returns 403 for some old images (e.g. 493 Curiosity sol 0 MARDI landing images, on both hosts). These are
+remembered in `%LOCALAPPDATA%\RoverImageScraper\unavailable.json` and don't count as missing.
+`--retry-unavailable` tries them again.
+
+Known limitation of counting: in a Curiosity folder where thumbnails push the count up, photos Mars Vista has but
+the dump lacks go unnoticed. For example, Curiosity sol 3 MAST has 34 such photos, but 338 files on disk vs 186
+listed reads as complete.
+
+Rehearsal (a copy of the dump's sols 1-3 under `staging/`, run with `--allow-existing`): 1,814 original files
+checked, 0 changed, 0 removed. 45 files added (Perseverance only), and a second run downloaded nothing.
+
 ### Dev setup
 Work on branch `refactor/marsvista`. Use a `.venv` made with Python 3.10 (`py -3.10 -m venv .venv`), then
 `.venv\Scripts\pip install -r requirements-dev.txt`. The API key goes in the `MARSVISTA_API_KEY` environment variable.

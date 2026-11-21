@@ -115,6 +115,13 @@ class MarsVistaClient:
         pm = data.get("photo_manifest", data)
         return {int(s["sol"]): SolSummary(int(s["total_photos"]), tuple(s["cameras"])) for s in pm["photos"]}
 
+    def camera_counts(self, rover: str, sol: int) -> dict[str, int]:
+        """Photo count per camera for one sol (v2 stats: one fast request, no paging). Only used to decide
+        whether a sol needs a full listing; the v1 listing is the source of truth for what gets downloaded."""
+        data = self._get("/api/v2/photos/stats",
+                         {"rovers": rover.lower(), "group_by": "camera", "sol_min": sol, "sol_max": sol})
+        return {g["key"]: int(g["count"]) for g in data["data"]["groups"]}
+
     def photos_for_sol(self, rover: str, sol: int) -> list[Photo]:
         """Every photo for one rover and sol, across all pages, deduplicated by ID and sorted by ID.
 

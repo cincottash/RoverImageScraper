@@ -3,8 +3,9 @@ import os
 import pytest
 
 from rover_scraper.api import ApiError, MarsVistaClient, Photo, SolSummary, compat_image_url
-from rover_scraper.download import save_new_file
-from rover_scraper.plan import Action, plan_sol, sol_looks_complete
+from rover_scraper.download import DownloadError, save_new_file
+from rover_scraper.state import Unavailable
+from rover_scraper.plan import Action, cameras_short, disk_camera_counts, exact_match, plan_sol
 from rover_scraper.scraper import Scraper
 
 
@@ -26,6 +27,12 @@ class FakeClient:
         for sol, photos in self.by_sol.items():
             out[sol] = SolSummary(len(photos), tuple(sorted({p.camera for p in photos})))
         return out
+
+    def camera_counts(self, rover, sol):
+        counts = {}
+        for p in self.by_sol.get(sol, []):
+            counts[p.camera] = counts.get(p.camera, 0) + 1
+        return counts
 
     def photos_for_sol(self, rover, sol):
         self.listed.append(sol)
@@ -90,14 +97,16 @@ def test_plan_actions_by_count(tmp_path, on_disk, expected):
     assert plan.action is expected
 
 
-def test_quick_check(tmp_path):
+def test_quick_checks(tmp_path):
+    assert disk_camera_counts(str(tmp_path), "Curiosity", 5) is None
     sol = tmp_path / "Curiosity" / "5"
-    assert not sol_looks_complete(str(tmp_path), "Curiosity", 5, 3, ["NAVCAM"])          # no folder
     write_files(str(sol / "NAVCAM"), [b"a", b"b"])
-    assert not sol_looks_complete(str(tmp_path), "Curiosity", 5, 3, ["NAVCAM"])          # partial sol
-    write_files(str(sol / "NAVCAM"), [b"c"], start=2)
-    assert sol_looks_complete(str(tmp_path), "Curiosity", 5, 3, ["NAVCAM"])
-    assert not sol_looks_complete(str(tmp_path), "Curiosity", 5, 3, ["NAVCAM", "MAST"])  # camera missing
+    disk = disk_camera_counts(str(tmp_path), "Curiosity", 5)
+    assert disk == {"NAVCAM": 2}
+    assert not exact_match(disk, 3, ["NAVCAM"])                  # partial sol
+    assert exact_match(disk, 2, ["NAVCAM"])
+    assert not exact_match(disk, 2, ["NAVCAM", "MAST"])          # camera missing
+    assert cameras_short({"NAVCAM": 2, "MAST": 9}, {"NAVCAM": 3, "MAST": 1}) == ["NAVCAM"]
 
 
 # ---- no-overwrite ----------------------------------------------------------------------------------------
@@ -120,10 +129,28 @@ def test_new_sol_downloads_all(tmp_path):
     assert report.downloaded == 3
 
 
-def test_complete_sol_skipped_without_listing(tmp_path):
-    write_files(str(tmp_path / "Curiosity" / "5" / "NAVCAM"), [b"a", b"b", b"thumb"])
+def test_exact_match_sol_skipped_without_any_request(tmp_path):
+    write_files(str(tmp_path / "Curiosity" / "5" / "NAVCAM"), [b"a", b"b"])
     client, report = run(tmp_path, {5: [photo(1), photo(2)]})
     assert client.listed == [] and report.sols_skipped_quick == 1 and report.downloaded == 0
+
+
+def test_extras_in_one_camera_dont_hide_a_short_camera(tmp_path):
+    # Perseverance sol 2 case: old EDL files Mars Vista doesn't list made the sol total look complete
+    write_files(str(tmp_path / "Perseverance" / "2" / "EDL_RDCAM"), [b"old"] * 5)
+    write_files(str(tmp_path / "Perseverance" / "2" / "NAVCAM_LEFT"), [content(1)])
+    listed = [photo(1, "NAVCAM_LEFT", 2, "Perseverance"), photo(2, "NAVCAM_LEFT", 2, "Perseverance"),
+              photo(3, "EDL_RDCAM", 2, "Perseverance")]
+    client, report = run(tmp_path, {2: listed}, rover="Perseverance")
+    assert client.listed == [2]
+    assert files(tmp_path / "Perseverance" / "2" / "NAVCAM_LEFT") == {"0": content(1), "1": content(2)}
+    assert len(os.listdir(tmp_path / "Perseverance" / "2" / "EDL_RDCAM")) == 5
+
+
+def test_extras_only_skipped_with_stats_no_listing(tmp_path):
+    write_files(str(tmp_path / "Curiosity" / "5" / "MAST"), [b"full", b"thumb"])
+    client, report = run(tmp_path, {5: [photo(1, "MAST")]})
+    assert client.listed == [] and report.sols_skipped_counts == 1
 
 
 def test_fill_adds_only_photos_not_already_present_any_order(tmp_path):
@@ -157,6 +184,33 @@ def test_new_camera_added_to_existing_sol(tmp_path):
         rover="Perseverance")
     assert files(existing) == {"0": b"keep"}
     assert files(tmp_path / "Perseverance" / "5" / "PIXL_MCC") == {"0": content(2)}
+
+
+def test_403_photo_remembered_and_folder_counts_as_complete(tmp_path):
+    state = str(tmp_path / "state" / "unavailable.json")
+    dest = tmp_path / "dest"
+    by_sol = {5: [photo(1), photo(2), photo(3)]}
+    FAIL_IDS.add(2)
+    try:
+        client = FakeClient(by_sol)
+        r1 = Scraper(client, str(dest), log=lambda m: None, fetch=fetch_403,
+                     unavailable=Unavailable(state)).run("Curiosity", 5, 5)
+        assert r1.newly_unavailable == 1 and not r1.problems
+        assert files(dest / "Curiosity" / "5" / "NAVCAM") == {"0": content(1), "1": content(3)}
+        # second run, fresh state object loaded from disk: 2 files on disk, 3 listed - 1 refused = complete
+        client2 = FakeClient(by_sol)
+        r2 = Scraper(client2, str(dest), log=lambda m: None, fetch=fetch_403,
+                     unavailable=Unavailable(state)).run("Curiosity", 5, 5)
+        assert client2.listed == [] and r2.sols_skipped_counts == 1 and r2.downloaded == 0
+    finally:
+        FAIL_IDS.clear()
+
+
+def fetch_403(_session, url):
+    i = int(url.rsplit("/", 1)[1][:-4])
+    if i in FAIL_IDS:
+        raise DownloadError("HTTP 403", status=403)
+    return content(i)
 
 
 def test_failed_photo_skipped_rest_saved(tmp_path):

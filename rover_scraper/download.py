@@ -8,7 +8,9 @@ import requests
 
 
 class DownloadError(Exception):
-    pass
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 def fetch_bytes(session: requests.Session, url: str, timeout: float = 120, retries: int = 4,
@@ -26,7 +28,7 @@ def fetch_bytes(session: requests.Session, url: str, timeout: float = 120, retri
                         and int(expected) != len(r.content):
                     raise DownloadError(f"{url}: got {len(r.content)} bytes, expected {expected}")
                 return r.content
-            last = DownloadError(f"HTTP {r.status_code} for {url}")
+            last = DownloadError(f"HTTP {r.status_code} for {url}", status=r.status_code)
             if r.status_code < 500 and r.status_code != 429:
                 raise last
         except (requests.ConnectionError, requests.Timeout) as e:
