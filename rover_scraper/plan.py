@@ -1,12 +1,14 @@
-"""Decide, for each rover/sol/camera, what is missing on disk. Pure logic: reads directory listings only.
+"""Decide what is missing on disk. Pure logic: reads directory listings only, never file contents.
 
-Layout (unchanged from the original scraper): <dest>/<Rover>/<sol>/<CAMERA>/<n>, no extension, where n counts
-from 0 in Mars Vista ID order within the camera.
+Layout (unchanged from the original scraper): <dest>/<Rover>/<sol>/<CAMERA>/<n>, no extension, n = 0, 1, 2...
+The order of photos inside a camera folder does not matter (the user's rule), so completeness is judged by
+counts: a folder with at least as many files as the API lists is complete. Curiosity folders from the old API
+often hold more (NASA thumbnails, which Mars Vista doesn't list).
 """
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 from .api import Photo
@@ -14,10 +16,8 @@ from .api import Photo
 
 class Action(str, Enum):
     NEW = "new"            # camera folder missing: download all photos as 0..n-1
-    COMPLETE = "complete"  # same number of files as the API lists: nothing to do
-    TOPUP = "topup"        # fewer files: verify the existing ones match the start of the list, then add the rest
-    SKIP_EXTRA = "extra"   # more files than the API lists (e.g. old Curiosity thumbnails): leave alone, report
-    CONFLICT = "conflict"  # folder contents aren't a clean 0..k-1 run of files: leave alone, report
+    COMPLETE = "complete"  # at least as many files on disk as the API lists: nothing to do
+    FILL = "fill"          # fewer files on disk: add the photos whose bytes aren't already in the folder
 
 
 @dataclass
@@ -26,17 +26,35 @@ class CameraPlan:
     sol: int
     camera: str
     folder: str
-    photos: list[Photo]          # in output order: photos[i] is saved as file "i"
-    existing: int                # count of numbered files already in the folder
+    photos: list[Photo]    # in Mars Vista ID order
+    existing: int          # count of numbered files already in the folder
+    next_index: int        # first free file number (max existing + 1, so nothing is ever renamed or reused)
     action: Action
-    reason: str = ""
-    sizes: dict[int, int] = field(default_factory=dict)  # sizes of existing numbered files
 
-    @property
-    def missing(self) -> list[tuple[int, Photo]]:
-        if self.action in (Action.NEW, Action.TOPUP):
-            return list(enumerate(self.photos))[self.existing:]
-        return []
+
+def count_numbered(folder: str) -> tuple[int, int]:
+    """(number of numbered files, next free number) for a camera folder. A missing folder is (0, 0)."""
+    try:
+        numbers = [int(e.name) for e in os.scandir(folder) if e.name.isdigit() and e.is_file()]
+    except FileNotFoundError:
+        return 0, 0
+    return len(numbers), (max(numbers) + 1 if numbers else 0)
+
+
+def sol_looks_complete(dest: str, rover: str, sol: int, total_photos: int, cameras: list[str]) -> bool:
+    """Quick check from the manifest, with no API listing: every listed camera has a folder and the sol holds at
+    least as many files as the API reports. Catches partial sols (which the old "folder exists" check missed).
+    Fails safe: anything that doesn't look complete gets a full per-camera check."""
+    sol_dir = os.path.join(dest, rover, str(sol))
+    if not os.path.isdir(sol_dir):
+        return False
+    total = 0
+    for camera in cameras:
+        n, _ = count_numbered(os.path.join(sol_dir, camera))
+        if n == 0:
+            return False
+        total += n
+    return total >= total_photos
 
 
 def group_by_camera(photos: list[Photo]) -> dict[str, list[Photo]]:
@@ -50,31 +68,12 @@ def plan_sol(dest: str, rover: str, sol: int, photos: list[Photo]) -> list[Camer
     plans = []
     for camera, cam_photos in sorted(group_by_camera(photos).items()):
         folder = os.path.join(dest, rover, str(sol), camera)
-        plans.append(plan_camera(folder, rover, sol, camera, cam_photos))
+        existing, next_index = count_numbered(folder)
+        if not os.path.isdir(folder):
+            action = Action.NEW
+        elif existing >= len(cam_photos):
+            action = Action.COMPLETE
+        else:
+            action = Action.FILL
+        plans.append(CameraPlan(rover, sol, camera, folder, cam_photos, existing, next_index, action))
     return plans
-
-
-def plan_camera(folder: str, rover: str, sol: int, camera: str, photos: list[Photo]) -> CameraPlan:
-    def make(action: Action, existing: int = 0, reason: str = "", sizes=None) -> CameraPlan:
-        return CameraPlan(rover, sol, camera, folder, photos, existing, action, reason, sizes or {})
-
-    if not os.path.isdir(folder):
-        return make(Action.NEW)
-
-    names = [n for n in os.listdir(folder) if not n.endswith(".part")]
-    numbered = sorted(int(n) for n in names if n.isdigit())
-    others = [n for n in names if not n.isdigit()]
-    if others:
-        return make(Action.CONFLICT, len(numbered), f"unexpected entries: {others[:5]}")
-    if numbered != list(range(len(numbered))):
-        return make(Action.CONFLICT, len(numbered), "numbered files are not a contiguous 0..k-1 run")
-    if any(not os.path.isfile(os.path.join(folder, str(n))) for n in numbered):
-        return make(Action.CONFLICT, len(numbered), "a numbered entry is not a file")
-
-    k, n = len(numbered), len(photos)
-    sizes = {i: os.path.getsize(os.path.join(folder, str(i))) for i in numbered}
-    if k == n:
-        return make(Action.COMPLETE, k, sizes=sizes)
-    if k > n:
-        return make(Action.SKIP_EXTRA, k, f"{k} files on disk, API lists {n}")
-    return make(Action.TOPUP, k, f"{k} of {n} on disk", sizes=sizes)

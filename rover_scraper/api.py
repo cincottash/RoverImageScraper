@@ -41,6 +41,12 @@ class RoverInfo:
     cameras: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class SolSummary:
+    total_photos: int
+    cameras: tuple[str, ...]
+
+
 def load_api_key() -> str:
     """Read MARSVISTA_API_KEY from the environment. On Windows, fall back to the user registry, where `setx`
     stores it, so the key works in shells that were opened before it was set."""
@@ -102,6 +108,12 @@ class MarsVistaClient:
         return [RoverInfo(name=r["name"], max_sol=int(r["max_sol"]), total_photos=int(r["total_photos"]),
                           cameras=tuple(c["name"] for c in r["cameras"]))
                 for r in data["rovers"]]
+
+    def manifest(self, rover: str) -> dict[int, SolSummary]:
+        """Photo count and camera names for every sol that has photos, in one request."""
+        data = self._get(f"/api/v1/manifests/{rover.lower()}")
+        pm = data.get("photo_manifest", data)
+        return {int(s["sol"]): SolSummary(int(s["total_photos"]), tuple(s["cameras"])) for s in pm["photos"]}
 
     def photos_for_sol(self, rover: str, sol: int) -> list[Photo]:
         """Every photo for one rover and sol, across all pages, deduplicated by ID and sorted by ID.

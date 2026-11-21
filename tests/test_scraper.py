@@ -2,9 +2,9 @@ import os
 
 import pytest
 
-from rover_scraper.api import ApiError, MarsVistaClient, Photo, compat_image_url
+from rover_scraper.api import ApiError, MarsVistaClient, Photo, SolSummary, compat_image_url
 from rover_scraper.download import save_new_file
-from rover_scraper.plan import Action, plan_camera, plan_sol
+from rover_scraper.plan import Action, plan_sol, sol_looks_complete
 from rover_scraper.scraper import Scraper
 
 
@@ -12,27 +12,52 @@ def photo(i, camera="NAVCAM", sol=5, rover="Curiosity"):
     return Photo(id=i, rover=rover, sol=sol, camera=camera, url=f"https://img/{i}.jpg")
 
 
-def content(p):
-    return f"image-{p.id}".encode()
+def content(i):
+    return f"image-{i}".encode()
 
 
 class FakeClient:
     def __init__(self, by_sol):
         self.by_sol = by_sol
+        self.listed = []
+
+    def manifest(self, rover):
+        out = {}
+        for sol, photos in self.by_sol.items():
+            out[sol] = SolSummary(len(photos), tuple(sorted({p.camera for p in photos})))
+        return out
 
     def photos_for_sol(self, rover, sol):
+        self.listed.append(sol)
         return list(self.by_sol.get(sol, []))
 
 
+FAIL_IDS = set()
+
+
 def fake_fetch(_session, url):
-    return f"image-{url.rsplit('/', 1)[1][:-4]}".encode()
+    i = int(url.rsplit("/", 1)[1][:-4])
+    if i in FAIL_IDS:
+        raise RuntimeError("HTTP 403")
+    return content(i)
 
 
-def write_files(folder, contents):
+def write_files(folder, contents, start=0):
     os.makedirs(folder, exist_ok=True)
-    for i, data in enumerate(contents):
+    for i, data in enumerate(contents, start):
         with open(os.path.join(folder, str(i)), "wb") as f:
             f.write(data)
+
+
+def run(tmp_path, by_sol, rover="Curiosity", **kw):
+    client = FakeClient(by_sol)
+    report = Scraper(client, str(tmp_path), log=lambda m: None, fetch=fake_fetch, **kw) \
+        .run(rover, min(by_sol), max(by_sol))
+    return client, report
+
+
+def files(folder):
+    return {n: open(os.path.join(folder, n), "rb").read() for n in os.listdir(folder)}
 
 
 # ---- URL compatibility -----------------------------------------------------------------------------------
@@ -48,31 +73,31 @@ def test_curiosity_url_unchanged():
 
 # ---- planning --------------------------------------------------------------------------------------------
 
-def test_plan_orders_by_id_and_groups_by_camera(tmp_path):
-    photos = [photo(30, "MAST"), photo(10, "NAVCAM"), photo(20, "MAST"), photo(5, "NAVCAM")]
-    plans = {p.camera: p for p in plan_sol(str(tmp_path), "Curiosity", 5, photos)}
+def test_plan_groups_by_camera_in_id_order(tmp_path):
+    plans = {p.camera: p for p in plan_sol(str(tmp_path), "Curiosity", 5,
+                                           [photo(30, "MAST"), photo(10), photo(20, "MAST"), photo(5)])}
     assert [p.id for p in plans["MAST"].photos] == [20, 30]
     assert [p.id for p in plans["NAVCAM"].photos] == [5, 10]
     assert plans["MAST"].folder == os.path.join(str(tmp_path), "Curiosity", "5", "MAST")
     assert all(p.action is Action.NEW for p in plans.values())
 
 
-@pytest.mark.parametrize("on_disk, expected", [(3, Action.COMPLETE), (1, Action.TOPUP), (5, Action.SKIP_EXTRA),
-                                               (0, Action.TOPUP)])
-def test_plan_actions_by_file_count(tmp_path, on_disk, expected):
-    folder = tmp_path / "cam"
-    write_files(str(folder), [b"x"] * on_disk)
-    assert plan_camera(str(folder), "Curiosity", 5, "NAVCAM", [photo(1), photo(2), photo(3)]).action is expected
+@pytest.mark.parametrize("on_disk, expected", [(3, Action.COMPLETE), (5, Action.COMPLETE), (1, Action.FILL),
+                                               (0, Action.FILL)])
+def test_plan_actions_by_count(tmp_path, on_disk, expected):
+    write_files(str(tmp_path / "Curiosity" / "5" / "NAVCAM"), [b"x"] * on_disk)
+    [plan] = plan_sol(str(tmp_path), "Curiosity", 5, [photo(1), photo(2), photo(3)])
+    assert plan.action is expected
 
 
-def test_plan_conflict_on_gap_or_stray_file(tmp_path):
-    folder = tmp_path / "cam"
-    write_files(str(folder), [b"a", b"b"])
-    os.remove(folder / "0")
-    assert plan_camera(str(folder), "C", 5, "N", [photo(1), photo(2), photo(3)]).action is Action.CONFLICT
-    (folder / "0").write_bytes(b"a")
-    (folder / "notes.txt").write_text("hi")
-    assert plan_camera(str(folder), "C", 5, "N", [photo(1), photo(2), photo(3)]).action is Action.CONFLICT
+def test_quick_check(tmp_path):
+    sol = tmp_path / "Curiosity" / "5"
+    assert not sol_looks_complete(str(tmp_path), "Curiosity", 5, 3, ["NAVCAM"])          # no folder
+    write_files(str(sol / "NAVCAM"), [b"a", b"b"])
+    assert not sol_looks_complete(str(tmp_path), "Curiosity", 5, 3, ["NAVCAM"])          # partial sol
+    write_files(str(sol / "NAVCAM"), [b"c"], start=2)
+    assert sol_looks_complete(str(tmp_path), "Curiosity", 5, 3, ["NAVCAM"])
+    assert not sol_looks_complete(str(tmp_path), "Curiosity", 5, 3, ["NAVCAM", "MAST"])  # camera missing
 
 
 # ---- no-overwrite ----------------------------------------------------------------------------------------
@@ -88,57 +113,67 @@ def test_save_new_file_never_overwrites(tmp_path):
 
 # ---- end to end with fakes -------------------------------------------------------------------------------
 
-def test_new_sol_downloads_all_in_id_order(tmp_path):
-    client = FakeClient({5: [photo(12), photo(11), photo(40, "MAST")]})
-    report = Scraper(client, str(tmp_path), log=lambda m: None, fetch=fake_fetch).run("Curiosity", 5, 6)
-    nav = tmp_path / "Curiosity" / "5" / "NAVCAM"
-    assert sorted(os.listdir(nav)) == ["0", "1"]
-    assert (nav / "0").read_bytes() == b"image-11" and (nav / "1").read_bytes() == b"image-12"
-    assert (tmp_path / "Curiosity" / "5" / "MAST" / "0").read_bytes() == b"image-40"
-    assert not (tmp_path / "Curiosity" / "6").exists()  # no photos -> no folder (old behaviour)
+def test_new_sol_downloads_all(tmp_path):
+    _, report = run(tmp_path, {5: [photo(12), photo(11), photo(40, "MAST")]})
+    assert files(tmp_path / "Curiosity" / "5" / "NAVCAM") == {"0": content(11), "1": content(12)}
+    assert files(tmp_path / "Curiosity" / "5" / "MAST") == {"0": content(40)}
     assert report.downloaded == 3
 
 
-def test_topup_appends_when_prefix_matches(tmp_path):
-    photos = [photo(1), photo(2), photo(3)]
-    folder = tmp_path / "Curiosity" / "5" / "NAVCAM"
-    write_files(str(folder), [content(photos[0])])
-    report = Scraper(FakeClient({5: photos}), str(tmp_path), log=lambda m: None, fetch=fake_fetch) \
-        .run("Curiosity", 5, 5)
-    assert [(folder / str(i)).read_bytes() for i in range(3)] == [content(p) for p in photos]
-    assert report.downloaded == 2 and not report.problems
+def test_complete_sol_skipped_without_listing(tmp_path):
+    write_files(str(tmp_path / "Curiosity" / "5" / "NAVCAM"), [b"a", b"b", b"thumb"])
+    client, report = run(tmp_path, {5: [photo(1), photo(2)]})
+    assert client.listed == [] and report.sols_skipped_quick == 1 and report.downloaded == 0
 
 
-def test_topup_refused_when_prefix_differs(tmp_path):
-    photos = [photo(1), photo(2), photo(3)]
+def test_fill_adds_only_photos_not_already_present_any_order(tmp_path):
+    folder = tmp_path / "Perseverance" / "9" / "NAVCAM"
+    write_files(str(folder), [content(3), content(1)])           # old order differs: that's fine
+    _, report = run(tmp_path, {9: [photo(i, sol=9, rover="Perseverance") for i in (1, 2, 3, 4)]},
+                    rover="Perseverance")
+    assert files(folder) == {"0": content(3), "1": content(1), "2": content(2), "3": content(4)}
+    assert report.downloaded == 2 and report.already_present == 2
+
+
+def test_fill_keeps_listed_duplicates(tmp_path):
     folder = tmp_path / "Curiosity" / "5" / "NAVCAM"
-    write_files(str(folder), [b"something else"])
-    report = Scraper(FakeClient({5: photos}), str(tmp_path), log=lambda m: None, fetch=fake_fetch) \
-        .run("Curiosity", 5, 5)
-    assert os.listdir(folder) == ["0"] and (folder / "0").read_bytes() == b"something else"
-    assert report.downloaded == 0 and "top-up refused" in report.problems[0]
+    write_files(str(folder), [content(1)])
+    dup = Photo(id=2, rover="Curiosity", sol=5, camera="NAVCAM", url="https://img/1.jpg")  # same image again
+    _, report = run(tmp_path, {5: [photo(1), dup]})
+    assert files(folder) == {"0": content(1), "1": content(1)}
+
+
+def test_fill_numbers_after_highest_existing_file(tmp_path):
+    folder = tmp_path / "Curiosity" / "5" / "NAVCAM"
+    write_files(str(folder), [content(1)], start=4)              # a gap: only file "4" exists
+    run(tmp_path, {5: [photo(1), photo(2)]})
+    assert files(folder) == {"4": content(1), "5": content(2)}
 
 
 def test_new_camera_added_to_existing_sol(tmp_path):
     existing = tmp_path / "Perseverance" / "5" / "NAVCAM_LEFT"
     write_files(str(existing), [b"keep"])
-    photos = [photo(1, "NAVCAM_LEFT", rover="Perseverance"), photo(2, "PIXL_MCC", rover="Perseverance")]
-    Scraper(FakeClient({5: photos}), str(tmp_path), log=lambda m: None, fetch=fake_fetch).run("Perseverance", 5, 5)
-    assert (existing / "0").read_bytes() == b"keep"   # complete: untouched
-    assert (tmp_path / "Perseverance" / "5" / "PIXL_MCC" / "0").read_bytes() == b"image-2"
+    run(tmp_path, {5: [photo(1, "NAVCAM_LEFT", rover="Perseverance"), photo(2, "PIXL_MCC", rover="Perseverance")]},
+        rover="Perseverance")
+    assert files(existing) == {"0": b"keep"}
+    assert files(tmp_path / "Perseverance" / "5" / "PIXL_MCC") == {"0": content(2)}
 
 
-def test_extra_files_left_alone(tmp_path):
-    folder = tmp_path / "Curiosity" / "5" / "MAST"
-    write_files(str(folder), [b"a", b"b", b"thumb"])
-    report = Scraper(FakeClient({5: [photo(1, "MAST")]}), str(tmp_path), log=lambda m: None, fetch=fake_fetch) \
-        .run("Curiosity", 5, 5)
-    assert sorted(os.listdir(folder)) == ["0", "1", "2"] and report.actions["extra"] == 1
+def test_failed_photo_skipped_rest_saved(tmp_path):
+    FAIL_IDS.add(2)
+    try:
+        _, report = run(tmp_path, {5: [photo(1), photo(2), photo(3)]})
+    finally:
+        FAIL_IDS.clear()
+    assert files(tmp_path / "Curiosity" / "5" / "NAVCAM") == {"0": content(1), "1": content(3)}
+    assert len(report.problems) == 1
+    # next run: count 2 < 3, so the sol is re-checked and the missing photo added
+    _, report = run(tmp_path, {5: [photo(1), photo(2), photo(3)]})
+    assert files(tmp_path / "Curiosity" / "5" / "NAVCAM")["2"] == content(2) and report.already_present == 2
 
 
 def test_dry_run_writes_nothing(tmp_path):
-    report = Scraper(FakeClient({5: [photo(1)]}), str(tmp_path), dry_run=True, log=lambda m: None,
-                     fetch=fake_fetch).run("Curiosity", 5, 5)
+    _, report = run(tmp_path, {5: [photo(1)]}, dry_run=True)
     assert os.listdir(tmp_path) == [] and report.would_download == 1
 
 
