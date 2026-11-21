@@ -179,10 +179,12 @@ To run from any other folder, use full paths to both `python.exe` (inside `.venv
 
 ### Limits
 
-- **Spirit and Opportunity images are NASA's archive versions.** Folders made with the old Mars Rover Photos API
-  hold NASA's old public-gallery copies of the same photos, which were brightened and are 500×500 instead of
-  512×512. The program can't tell that two such files are the same photo, so where the archive lists more photos
-  than a folder has, the added photos can include archive copies of photos already there.
+- **Spirit and Opportunity folders from the old API are left as they are.** Those folders hold NASA's old
+  public-gallery copies of the photos (brightened, 500×500), while the archive serves different files of the same
+  photos (512×512), so the program can't tell which archive photos a folder already has. Where the archive lists
+  more photos than such a folder holds, the folder is left alone (logged as `KEEP`) rather than topped up with
+  copies of photos already there. Sols and cameras missing entirely are still downloaded, and folders this
+  program started itself are completed as usual (it recognises its own files by size).
 - **Curiosity thumbnails are not included.** Folders made with the old Mars Rover Photos API may contain
   thumbnail copies as extra numbered files. Mars Vista doesn't list them, so those folders look "complete" by
   count even if a full-size photo is missing.

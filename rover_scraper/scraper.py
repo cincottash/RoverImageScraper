@@ -14,6 +14,7 @@ import requests
 
 from api import Cancelled, MarsVistaClient, Photo
 from download import fetch_bytes, head_size, make_session, save_new_file
+from pds import is_pds_rover
 from plan import (Action, CameraPlan, cameras_short, disk_camera_counts, exact_match, last_sol_on_disk,
                   plan_sol)
 from state import PERMANENT_STATUSES, Unavailable
@@ -33,6 +34,7 @@ class Report:
     newly_unavailable: int = 0           # NASA refused (403/404/410) this run; remembered for next time
     known_unavailable: int = 0           # skipped because NASA refused them on an earlier run
     sols_with_work: int = 0              # sols that needed (or, in a dry run, would need) downloads
+    left_as_is: int = 0                  # Spirit/Opportunity folders from another source, not topped up
     problems: list[str] = field(default_factory=list)
     cancelled: bool = False
 
@@ -141,13 +143,14 @@ class Scraper:
             if allowed is not None:
                 photos = [p for p in photos if p.camera in allowed]
             plans = plan_sol(self.dest, rover, sol, photos, unavailable)
-            if any(p.action is not Action.COMPLETE for p in plans):
-                report.sols_with_work += 1
+            worked = False
             for plan in plans:
                 if self.cancel.is_set():
                     report.cancelled = True
                     break
-                self._do_camera(plan, report)
+                worked = self._do_camera(plan, report) or worked
+            if worked:
+                report.sols_with_work += 1
             if not self.dry_run:
                 self.unavailable.save()   # after every sol, so an interrupted run keeps what it learned
         return report
@@ -171,11 +174,38 @@ class Scraper:
                 self.cancel.set()     # wake threads waiting on the download limit, so Ctrl+C quits promptly
                 raise
 
-    def _do_camera(self, plan: CameraPlan, report: Report) -> None:
+    def _from_other_source(self, plan: CameraPlan) -> bool:
+        """Spirit/Opportunity only: True if a short folder's photos came from somewhere other than NASA's archive
+        (folders made with the old API hold NASA's old public-gallery copies). Those copies never match the
+        archive's files, so topping the folder up would add a second copy of photos already there. If any file
+        here has the size of an archive photo, the folder is this program's own unfinished download, and it is
+        completed as usual. Uses size checks only (no downloads)."""
+        if not (is_pds_rover(plan.rover) and plan.action is Action.FILL and plan.existing):
+            return False
+        sizes = {e.stat().st_size for e in os.scandir(plan.folder) if e.name.isdigit() and e.is_file()}
+        known = False
+        results = self._ordered_parallel(self.head, plan.photos)
+        try:
+            for _, size in results:
+                if isinstance(size, int):
+                    known = True
+                    if size in sizes:
+                        return False
+        finally:
+            results.close()
+        return known              # if the archive gave no sizes, it can't be told apart: fill as usual
+
+    def _do_camera(self, plan: CameraPlan, report: Report) -> bool:
+        """Download what's missing for one camera folder. Returns True if it needed (or would need) downloads."""
         where = f"{plan.rover}/{plan.sol}/{plan.camera}"
         report.actions[plan.action.value] += 1
         if plan.action is Action.COMPLETE:
-            return
+            return False
+        if self._from_other_source(plan):
+            report.left_as_is += 1
+            self.log(f"KEEP {where}: {plan.existing} photo(s) from another source (such as NASA's old gallery); "
+                     f"the archive lists {len(plan.photos)}. Left as is, so nothing is duplicated.")
+            return False
         self.progress({"event": "camera", "rover": plan.rover, "sol": plan.sol, "camera": plan.camera})
         n = len(plan.photos)
         if plan.action is Action.NEW:
@@ -184,7 +214,7 @@ class Scraper:
             self.log(f"{'PLAN' if self.dry_run else 'FILL'} {where}: {plan.existing} on disk, {n} listed")
         if self.dry_run:
             report.would_download += n - plan.existing if plan.action is Action.FILL else n
-            return
+            return True
 
         todo = [p for p in plan.photos if p.id not in self.unavailable]
         report.known_unavailable += len(plan.photos) - len(todo)
@@ -200,7 +230,7 @@ class Scraper:
                 # Bytes already in the folder, as a multiset: identical images listed twice are kept twice.
                 have = Counter(self._existing_hashes(plan.folder))
         if not todo:
-            return
+            return True
 
         os.makedirs(plan.folder, exist_ok=True)
         index = plan.next_index
@@ -209,7 +239,7 @@ class Scraper:
             for photo, result in results:
                 if self.cancel.is_set():
                     report.cancelled = True
-                    return
+                    return True
                 if isinstance(result, Exception):
                     self._record_failure(where, photo, result, report)
                     continue
@@ -225,6 +255,7 @@ class Scraper:
                 report.bytes_saved += len(result)
         finally:
             results.close()
+        return True
 
     def _limited_fetch(self, session, url: str) -> bytes:
         """Download one photo, first waiting for the user's download limit if one is set."""

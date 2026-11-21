@@ -126,6 +126,8 @@ def main(argv: list[str] | None = None) -> int:
               f"already on disk (same bytes): {report.already_present}")
         print(f"NASA refused (403/404): {report.newly_unavailable} new, {report.known_unavailable} known "
               f"(remembered in {unavailable.path})")
+    if report.left_as_is:
+        print(f"Spirit/Opportunity folders from another source left as is (no duplicates): {report.left_as_is}")
     print(f"Problems/skips: {len(report.problems)}")
     for line in report.problems[:50]:
         print("  " + line)

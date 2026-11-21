@@ -1834,6 +1834,9 @@ class MainWindow(QMainWindow):
         state = "Paused" if paused else "Stopped" if cancelled else "Finished"
         text = (f"<b>{state}.</b> Downloaded {r.downloaded:,} photos; {r.already_present:,} were already on disk; "
                 f"NASA refused {r.newly_unavailable + r.known_unavailable:,}. {r.sols_checked:,} sols checked.")
+        if r.left_as_is:
+            text += (f" {r.left_as_is:,} Spirit/Opportunity folder(s) from another source were left as is, "
+                     f"so nothing was duplicated.")
         if r.problems:
             text += f" <span style='color:#B45309'>{len(r.problems):,} problem(s).</span>"
         self.summary.setText(text)
