@@ -100,7 +100,8 @@ What the window offers:
 - **Limit downloads to N photos per minute/hour/day:** an optional cap you choose, for example to go easy on a
   shared connection. It's a rolling window: with 500 per hour, no 60-minute stretch ever has more than 500
   photo downloads. When the cap is reached, an amber banner shows when downloading resumes, and it carries on by
-  itself. Pause, Resume and Stop work during the wait, and pausing doesn't reset the count.
+  itself. Pause, Resume and Stop work during the wait, and pausing doesn't reset the count. Typing a number or
+  choosing a period turns the limit on; untick the box to turn it off.
 - **Library status:** sols, photos and size on disk, the latest sol available, and how many new sols there are.
   For Spirit and Opportunity the number of new photos isn't known until each sol is looked at, so only sols are
   shown.

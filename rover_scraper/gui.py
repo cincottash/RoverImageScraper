@@ -790,6 +790,9 @@ class MainWindow(QMainWindow):
         self.limit_files.editingFinished.connect(lambda: self.limit_files.setText(str(self._limit_value())))
         self.limit_period = QComboBox()
         self.limit_period.addItems(list(PERIODS))
+        # Both stay editable; typing a number or choosing a period turns the limit on (the box turns it off).
+        self.limit_files.textEdited.connect(lambda _text: self.limit_box.setChecked(True))
+        self.limit_period.activated.connect(lambda _index: self.limit_box.setChecked(True))
         lim.addWidget(self.limit_box)
         lim.addWidget(self.limit_files)
         lim.addWidget(label("photos per"))
@@ -810,7 +813,7 @@ class MainWindow(QMainWindow):
         self.adv.setVisible(False)
         lay.addWidget(self.adv)
         self.locked += [self.check_existing, self.sol_from, self.sol_to, self.workers, self.adv_toggle,
-                        self.limit_box]
+                        self.limit_box, self.limit_files, self.limit_period]
         self.left_col.addWidget(frame)
 
     def _build_library_card(self) -> QFrame:
@@ -1084,8 +1087,6 @@ class MainWindow(QMainWindow):
         self.open_btn.setEnabled(folder_given)
         for w in self.locked:
             w.setEnabled(idle)
-        for w in (self.limit_files, self.limit_period):
-            w.setEnabled(idle and self.limit_box.isChecked())
         if hasattr(self, "act_choose"):
             self.act_choose.setEnabled(idle)
 
