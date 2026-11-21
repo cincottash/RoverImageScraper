@@ -12,3 +12,7 @@ config.local.*
 staging/
 scratch/
 *.part
+
+# Local-only test suite (kept out of the repo)
+tests/
+requirements-dev.txt

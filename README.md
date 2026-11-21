@@ -93,12 +93,7 @@ The destination folder must already exist.
 - The order of photos within a camera folder follows Mars Vista's listing and may differ from folders made with
   the old API.
 
-## Development
-
-```bat
-.venv\Scripts\pip install -r requirements-dev.txt
-.venv\Scripts\python -m pytest
-```
+## Code layout
 
 - `rover_scraper/api.py`: the Mars Vista client (the only code that knows the API).
 - `rover_scraper/plan.py`: decides what's missing.
