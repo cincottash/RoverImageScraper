@@ -69,9 +69,13 @@ def main(argv: list[str] | None = None) -> int:
         report.cancelled = True
         print("\nInterrupted. Finished files are kept; re-run to continue.")
 
-    print(f"\nCamera folders: {dict(report.actions)}")
-    print(f"{'Would download' if args.dry_run else 'Downloaded'}: "
-          f"{report.would_download if args.dry_run else report.downloaded} file(s)")
+    print(f"\nSols with photos checked: {report.sols_checked} "
+          f"({report.sols_skipped_quick} complete by quick count check)")
+    print(f"Camera folders looked at: {dict(report.actions)}")
+    if args.dry_run:
+        print(f"Would download: up to {report.would_download} file(s)")
+    else:
+        print(f"Downloaded: {report.downloaded} file(s); already on disk (same bytes): {report.already_present}")
     print(f"Problems/skips: {len(report.problems)}")
     for line in report.problems[:50]:
         print("  " + line)
@@ -79,7 +83,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  ... {len(report.problems) - 50} more (see --report)")
     if args.report:
         with open(args.report, "w", encoding="utf-8") as f:
-            json.dump({"actions": report.actions, "downloaded": report.downloaded,
+            json.dump({"sols_checked": report.sols_checked, "sols_skipped_quick": report.sols_skipped_quick,
+                       "actions": report.actions, "downloaded": report.downloaded,
+                       "already_present": report.already_present,
                        "would_download": report.would_download, "problems": report.problems,
                        "cancelled": report.cancelled}, f, indent=1)
     return 130 if report.cancelled else 0
