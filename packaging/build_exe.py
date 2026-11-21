@@ -30,9 +30,13 @@ EXCLUDES = ["tkinter", "unittest", "pydoc", "doctest", "pytest", "pyflakes", "se
 
 
 def build(out: str) -> str:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from make_icon import write_ico
     with tempfile.TemporaryDirectory(prefix="pyinstaller-work-", dir=out) as work:
+        ico = os.path.join(work, "icon.ico")
+        write_ico(ico)                                     # the .exe's own icon (Mars), not PyInstaller's default
         args = [sys.executable, "-m", "PyInstaller", os.path.join(SRC, "gui.py"),
-                "--name", NAME, "--onefile", "--windowed", "--noconfirm", "--clean",
+                "--name", NAME, "--onefile", "--windowed", "--noconfirm", "--clean", "--icon", ico,
                 "--paths", SRC,
                 "--add-data", f"{os.path.join(SRC, 'check.svg')}{os.pathsep}.",
                 "--add-data", f"{os.path.join(ROOT, 'packaging', 'icon.svg')}{os.pathsep}.",

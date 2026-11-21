@@ -158,6 +158,44 @@ DARK = dict(bg="#15171C", card="#1E2128", border="#2D313A", text="#E6E8EB", mute
             err="#FCA5A5", err_bg="#3B1717", track="#2A2F38", log_bg="#171A20")
 
 
+def _variant(base: dict, bg, card, border, text, muted, accent, accent_hover, input, track,
+             accent_text="#FFFFFF", **rest) -> dict:
+    """A theme built on Light or Dark: its own surfaces and accent, the base's status colors."""
+    return {**base, **dict(bg=bg, card=card, border=border, text=text, muted=muted, accent=accent,
+                           accent_hover=accent_hover, accent_text=accent_text, input=input, track=track,
+                           log_bg=input), **rest}
+
+
+# (menu name, setting value, colors). Light and Dark first, then the extra themes.
+THEMES = [
+    ("Light", "light", LIGHT),
+    ("Dark", "dark", DARK),
+    ("Mars Day", "mars_day", _variant(LIGHT, "#F6EEE6", "#FFFBF7", "#E8D6C6", "#3B2418", "#8A6A58",
+                                      "#C2410C", "#9A3412", "#FFFFFF", "#F0E2D6")),
+    ("Red Planet", "red_planet", _variant(DARK, "#1C1210", "#271916", "#3D2620", "#F3E3DC", "#B89A8E",
+                                          "#E2582B", "#F07A4F", "#1F1412", "#35221D")),
+    ("Deep Space", "deep_space", _variant(DARK, "#0B1020", "#121A2E", "#22304D", "#E1E7F5", "#8D9AB8",
+                                          "#4F7CFF", "#7A9CFF", "#0E1527", "#1C2742")),
+    ("Nebula", "nebula", _variant(DARK, "#151022", "#1E1730", "#342850", "#ECE6F8", "#A699C2",
+                                  "#A855F7", "#C084FC", "#18122A", "#2A2140")),
+    ("Aurora", "aurora", _variant(DARK, "#0C1716", "#13211F", "#22383A", "#DDF2EE", "#8EB3AD",
+                                  "#14B8A6", "#2DD4BF", "#0F1C1B", "#1C302D", accent_text="#04201C")),
+    ("Starlight", "starlight", _variant(DARK, "#050608", "#0E1014", "#1E222A", "#F1F3F6", "#8C94A3",
+                                        "#38BDF8", "#7DD3FC", "#08090C", "#181B22", accent_text="#031722")),
+    ("Lunar", "lunar", _variant(LIGHT, "#ECEDEF", "#F8F8F9", "#D5D7DB", "#202226", "#686C74",
+                                "#4B5563", "#374151", "#FFFFFF", "#E1E3E6")),
+    ("Ice Moon", "ice_moon", _variant(LIGHT, "#EEF5FA", "#FAFDFF", "#D3E3EE", "#14283A", "#5C7489",
+                                      "#0284C7", "#0369A1", "#FFFFFF", "#DDEBF5")),
+    ("Solar Flare", "solar_flare", _variant(DARK, "#17130A", "#211B0F", "#3A301A", "#F6EEDB", "#B8A57E",
+                                            "#F59E0B", "#FBBF24", "#1B160C", "#2F2715", accent_text="#2A1A00")),
+    ("High Contrast", "high_contrast", _variant(DARK, "#000000", "#000000", "#FFFFFF", "#FFFFFF", "#D0D0D0",
+                                                "#FFD400", "#FFE45C", "#000000", "#333333",
+                                                accent_text="#000000", ok="#7CFF7C", warn="#FFE45C",
+                                                err="#FF8080")),
+]
+THEME_COLORS = {key: colors for _, key, colors in THEMES}
+
+
 def system_is_dark(app: QApplication) -> bool:
     try:
         return app.styleHints().colorScheme() == Qt.ColorScheme.Dark
@@ -608,6 +646,8 @@ class MainWindow(QMainWindow):
         # Camera selection to bring back when an unticked rover is ticked again (and what's saved for it).
         self.saved_excluded: dict[str, set[str]] = {n: set(c) for n, c in self.settings.excluded_cameras.items()}
         self.speed_samples: collections.deque = collections.deque(maxlen=1000)
+        self.sol_samples: collections.deque = collections.deque(maxlen=5000)   # (time, sol index) for Time left
+        self.active_scraper: Scraper | None = None     # the running download, for settings changed mid-run
         self.api_error = ""
         self.last_summary = ""
 
@@ -865,8 +905,12 @@ class MainWindow(QMainWindow):
         al.addStretch()
         self.adv.setVisible(False)
         lay.addWidget(self.adv)
-        self.locked += [self.check_existing, self.sol_from, self.sol_to, self.workers, self.adv_toggle,
-                        self.limit_box, self.limit_files, self.limit_period]
+        # Parallel downloads and the download limit stay editable during a download (see _live_change).
+        self.locked += [self.check_existing, self.sol_from, self.sol_to]
+        self.workers.currentIndexChanged.connect(lambda _i: self._live_change())
+        self.limit_box.toggled.connect(lambda _on: self._live_change())
+        self.limit_files.editingFinished.connect(self._live_change)
+        self.limit_period.activated.connect(lambda _i: self._live_change())
         self.left_col.addWidget(frame)
 
     def _build_library_card(self) -> QFrame:
@@ -877,6 +921,11 @@ class MainWindow(QMainWindow):
         self.scanned_label = label("Not scanned yet", "muted")
         head.addWidget(self.scanned_label)
         lay.addLayout(head)
+        self.outdated_note = label("These numbers were counted before your last download, so they don't include "
+                                   "the photos it added. Click Quick scan to update them.", "muted", wrap=True)
+        self.outdated_note.setProperty("tone", "warn")
+        self.outdated_note.setVisible(False)
+        lay.addWidget(self.outdated_note)
         grid = QGridLayout()
         grid.setHorizontalSpacing(24)
         grid.setVerticalSpacing(5)
@@ -948,12 +997,17 @@ class MainWindow(QMainWindow):
         items = [("Photos downloaded", 0, 0), ("Already had", 0, 2),
                  ("Data downloaded", 1, 0), ("Speed", 1, 2),
                  ("Photo rate", 2, 0), ("Average speed", 2, 2),
-                 ("NASA refused", 3, 0), ("Errors", 3, 2),
+                 ("Unavailable at NASA", 3, 0), ("Errors", 3, 2),
                  ("Time left", 4, 0), ("Elapsed", 4, 2)]
         tips = {"Data downloaded": "Size of the photos saved to the folder in this run.",
                 "Speed": "Download speed, averaged over a recent window (View > Speed averaged over).",
                 "Average speed": "Average download speed since the run started, including waits.",
-                "Photo rate": "Photos saved per second over the same window as Speed."}
+                "Photo rate": "Photos saved per second over the same window as Speed.",
+                "Already had": "Photos that were already in the folder: in sols that were already complete, or "
+                               "found while filling in a sol.",
+                "Unavailable at NASA": "Photos NASA's image servers refuse to send (HTTP 403/404), usually older images NASA no longer serves. They can't be downloaded, so they're remembered and skipped on later runs instead of counting as missing. Download > Retry photos NASA refused tries them all again.",
+                "Time left": "Estimated from how fast sols went by over the last two minutes, so it changes when "
+                             "the download moves from sols you already have to new ones."}
         for name, r, c in items:
             head = label(name, "rowHead")
             head.setToolTip(tips.get(name, ""))
@@ -1270,6 +1324,16 @@ class MainWindow(QMainWindow):
         self.adv.setVisible(not self.adv.isVisible())
         self.adv_toggle.setText("Advanced ▾" if self.adv.isVisible() else "Advanced ▸")
 
+    def _set_verbose(self, on: bool) -> None:
+        self.settings.verbose_log = on
+        self._save_settings()
+        self._log("Detailed activity log " + ("on: every sol and photo is listed." if on else "off."))
+
+    def _detail(self, message: str) -> None:
+        """Extra log lines for the detailed activity log (from the download thread; checked live)."""
+        if self.settings.verbose_log:
+            self._post("log", message)
+
     def _toggle_log(self) -> None:
         self._set_log_visible(not self.settings.show_log)
 
@@ -1290,6 +1354,7 @@ class MainWindow(QMainWindow):
     def _build_menus(self) -> None:
         mb = self.menuBar()
         file_m = mb.addMenu("&File")
+        download_m = mb.addMenu("&Download")
         view_m = mb.addMenu("&View")
         help_m = mb.addMenu("&Help")
 
@@ -1305,30 +1370,48 @@ class MainWindow(QMainWindow):
         quit_act.setShortcut(QKeySequence("Ctrl+Q"))
         quit_act.triggered.connect(self.close)
 
-        self._choice_menu(view_m, "Data units", [("Auto", "auto"), ("KB", "KB"), ("MB", "MB"), ("GB", "GB"),
-                                                 ("TB", "TB")], "data_unit")
-        self._choice_menu(view_m, "Speed units", [("Auto", "auto"), ("KB/s", "KB/s"), ("MB/s", "MB/s"),
-                                                  ("Mbit/s", "Mbit/s")], "speed_unit")
-        self._choice_menu(view_m, "Speed averaged over", [(f"{n} seconds", n) for n in SPEED_WINDOWS],
+        # Download: the same actions as the buttons, enabled whenever their button is
+        download_m.setToolTipsVisible(True)
+        self.button_actions = []
+        for item in ((self.start_btn, "Start"), (self.pause_btn, "Pause"), (self.stop_btn, "Stop"), None,
+                     (self.quick_btn, "Quick scan"), (self.full_btn, "Full check…"), (self.preview_btn, "Preview")):
+            if item is None:
+                download_m.addSeparator()
+                continue
+            button, text = item
+            act = download_m.addAction(text)
+            act.triggered.connect(button.click)
+            self.button_actions.append((act, button))
+        download_m.aboutToShow.connect(self._sync_button_actions)
+        download_m.addSeparator()
+        self.act_retry = download_m.addAction("Retry photos NASA refused (next run)")
+        self.act_retry.setCheckable(True)
+        self.act_retry.setToolTip("Photos NASA refused (HTTP 403/404) are normally skipped on later runs. "
+                                  "Tick this to try them all again on the next run.")
+
+        self._choice_menu(view_m, "Theme", [("Match operating system", "system")]
+                          + [(name, key) for name, key, _ in THEMES],
+                          "theme", after=self._apply_theme)
+        units_m = view_m.addMenu("Units")
+        self._choice_menu(units_m, "Data", [("Auto", "auto"), ("KB", "KB"), ("MB", "MB"), ("GB", "GB"),
+                                            ("TB", "TB")], "data_unit")
+        self._choice_menu(units_m, "Speed", [("Auto", "auto"), ("KB/s", "KB/s"), ("MB/s", "MB/s"),
+                                             ("Mbit/s", "Mbit/s")], "speed_unit")
+        self._choice_menu(units_m, "Speed averaged over", [(f"{n} seconds", n) for n in SPEED_WINDOWS],
                           "speed_window")
         view_m.addSeparator()
-        match_system = "Match Windows" if os.name == "nt" else "Match system"
-        self._choice_menu(view_m, "Theme", [(match_system, "system"), ("Light", "light"), ("Dark", "dark")],
-                          "theme", after=self._apply_theme)
         self.act_log = view_m.addAction("Show activity log")
         self.act_log.setCheckable(True)
         self.act_log.setChecked(self.settings.show_log)
         self.act_log.toggled.connect(self._set_log_visible)
+        self.act_verbose = view_m.addAction("Detailed activity log")
+        self.act_verbose.setCheckable(True)
+        self.act_verbose.setChecked(self.settings.verbose_log)
+        self.act_verbose.setToolTip("Also log every sol checked and every photo saved or skipped.")
+        self.act_verbose.toggled.connect(self._set_verbose)
         view_m.addSeparator()
         view_m.addAction("Reset view options").triggered.connect(self._reset_view)
 
-        settings_m.setToolTipsVisible(True)
-        self.act_retry = settings_m.addAction("Retry photos NASA refused (next run)")
-        self.act_retry.setCheckable(True)
-        self.act_retry.setToolTip("Photos NASA refused (HTTP 403/404) are normally skipped on later runs. "
-                                  "Tick this to try them all again on the next run.")
-        folder_act = settings_m.addAction("Open app data folder")
-        folder_act.triggered.connect(self._open_settings_folder)
         self.act_move_data = settings_m.addAction("Change app data folder…")
         self.act_move_data.triggered.connect(self._change_data_folder)
         settings_m.addSeparator()
@@ -1336,8 +1419,18 @@ class MainWindow(QMainWindow):
 
         site = help_m.addAction("Mars Vista website")
         site.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://marsvista.dev")))
+        help_m.addAction("Open app data folder").triggered.connect(self._open_settings_folder)
+        help_m.addAction("Report a problem").triggered.connect(lambda: QDesktopServices.openUrl(
+            QUrl("https://github.com/cincottash/RoverImageScraper/issues")))
+        help_m.addSeparator()
         about = help_m.addAction("About Rover Image Scraper")
         about.triggered.connect(self._about)
+
+    def _sync_button_actions(self) -> None:
+        """Download menu items follow their buttons (enabled state, and Start/Resume wording)."""
+        for act, button in self.button_actions:
+            act.setEnabled(button.isEnabled() and button.isVisible())
+            act.setText(button.text().replace("▶", "").strip())
 
     def _choice_menu(self, parent, title: str, options: list, attr: str, after=None) -> None:
         """A submenu of mutually exclusive choices stored in self.settings.<attr>."""
@@ -1411,8 +1504,10 @@ class MainWindow(QMainWindow):
 
     def _apply_theme(self) -> None:
         choice = self.settings.theme
-        dark = system_is_dark(self.app) if choice == "system" else choice == "dark"
-        apply_theme(self.app, DARK if dark else LIGHT)
+        if choice in THEME_COLORS:
+            apply_theme(self.app, THEME_COLORS[choice])
+        else:            # "system", or a theme this version doesn't have
+            apply_theme(self.app, DARK if system_is_dark(self.app) else LIGHT)
 
     def _open_settings_folder(self) -> None:
         os.makedirs(STATE_DIR, exist_ok=True)
@@ -1439,7 +1534,11 @@ class MainWindow(QMainWindow):
                           "<b>Rover Image Scraper</b><br><br>Downloads raw photos from NASA's Mars rovers, "
                           "adding only what's missing. Curiosity and Perseverance come from the Mars Vista API; "
                           "Spirit and Opportunity from NASA's Planetary Data System archive.<br><br>"
-                          'Photos: NASA/JPL-Caltech. Data: <a href="https://marsvista.dev">Mars Vista</a>.')
+                          'Photos: NASA/JPL-Caltech. Data: <a href="https://marsvista.dev">Mars Vista</a>.<br><br>'
+                          'Copyright © 2026 cincottash. Free software under the <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU General '
+                          'Public License v3</a>. Source: '
+                          '<a href="https://github.com/cincottash/RoverImageScraper">github.com/cincottash/'
+                          'RoverImageScraper</a>.')
 
     def _stop(self) -> None:
         if self.mode == "idle" and self.checkpoint:     # stopping a paused download: forget where it was
@@ -1470,10 +1569,33 @@ class MainWindow(QMainWindow):
             self.limiter = None
             return None
         n, period = self._limit_value(), self.limit_period.currentText()
-        if self.limiter is None or (self.limiter.max_files, self.limiter.period) != (n, PERIODS[period]):
+        if self.limiter is None:
             self.limiter = FileLimiter(n, PERIODS[period], cancelled_error=Cancelled)
-            self.limiter.label = f"{n:,} photos per {period}"
+        else:            # change the numbers in place, so photos already counted still count
+            self.limiter.max_files, self.limiter.period = n, PERIODS[period]
+        self.limiter.label = f"{n:,} photos per {period}"
         return self.limiter
+
+    def _live_change(self) -> None:
+        """Parallel downloads or the download limit changed. During a download the new values apply from the next
+        camera folder (and the limit at once); otherwise they're simply used by the next run."""
+        self._save_settings()
+        scraper = self.active_scraper
+        if self.mode != "download" or scraper is None:
+            return
+        workers = self.workers.value()
+        if scraper.workers != workers:
+            scraper.workers = workers
+            self._log(f"Parallel downloads changed to {workers} (from the next camera folder).")
+        old = scraper.limiter
+        before = (old.max_files, old.period) if old is not None else None
+        limiter = self._make_limiter()            # may update the same object in place
+        if limiter is not None:
+            limiter.cancel = self.cancel
+        scraper.limiter = limiter
+        after = (limiter.max_files, limiter.period) if limiter is not None else None
+        if after != before:
+            self._log(f"Download limit now {limiter.label}." if limiter else "Download limit turned off.")
 
     def _ensure_folder(self, folder: str | None = None) -> bool:
         """True if the photo folder exists, or the user agreed to create it and it was created."""
@@ -1588,12 +1710,13 @@ class MainWindow(QMainWindow):
         retry_refused = self.act_retry.isChecked()
         if retry_refused:
             self.act_retry.setChecked(False)      # one run only
-            self._log("Retrying photos NASA refused before (File > Settings > Retry photos NASA refused).")
+            self._log("Retrying photos NASA refused before (Download > Retry photos NASA refused).")
         self.report = Report()
         report = self.report
         self.summary.setVisible(False)
         self.problems_btn.setVisible(False)
         self.speed_samples.clear()
+        self.sol_samples.clear()
         self.pos = {}
         self.run_started, self.run_ended = time.time(), 0.0
         self._log(f"=== Download started {time.strftime('%H:%M')}: {', '.join(rovers)}"
@@ -1609,7 +1732,9 @@ class MainWindow(QMainWindow):
                 limiter.cancel = self.cancel          # this run's Stop/Pause also ends a limit wait
             scraper = Scraper(client, dest, log=lambda m: self._post("log", m), cancel=self.cancel,
                               unavailable=unavailable, workers=workers, cameras=cameras,
-                              progress=lambda e: self._post("progress", e), limiter=limiter)
+                              progress=lambda e: self._post("progress", e), limiter=limiter,
+                              detail=self._detail)
+            self.active_scraper = scraper
             for i, rover in enumerate(rovers, 1):
                 if self.cancel.is_set():
                     break
@@ -1641,6 +1766,7 @@ class MainWindow(QMainWindow):
         self.summary.setVisible(False)
         self.problems_btn.setVisible(False)
         self.speed_samples.clear()
+        self.sol_samples.clear()
         self.pos = {"rover": cp["rover"], "rover_index": cp["rover_index"], "sol": cp["sol"],
                     "sol_min": cp["sol_min"]}
         self.run_started, self.run_ended = time.time() - cp.get("elapsed", 0), 0.0
@@ -1656,7 +1782,9 @@ class MainWindow(QMainWindow):
                 limiter.cancel = self.cancel          # this run's Stop/Pause also ends a limit wait
             scraper = Scraper(client, dest, log=lambda m: self._post("log", m), cancel=self.cancel,
                               unavailable=unavailable, workers=workers, cameras=cameras,
-                              progress=lambda e: self._post("progress", e), limiter=limiter)
+                              progress=lambda e: self._post("progress", e), limiter=limiter,
+                              detail=self._detail)
+            self.active_scraper = scraper
             for i, rover in enumerate(rovers, 1):
                 if self.cancel.is_set() or i < cp["rover_index"]:
                     continue
@@ -1805,7 +1933,11 @@ class MainWindow(QMainWindow):
                 break
             if kind == "log":
                 lines.append(payload)
-            elif kind == "progress":
+                continue
+            if lines:              # lines logged so far go first, so the log stays in order
+                self._log("\n".join(lines))
+                lines = []
+            if kind == "progress":
                 self._on_progress(payload)
             elif kind == "done":
                 self._on_done(*payload)
@@ -1855,6 +1987,9 @@ class MainWindow(QMainWindow):
                 self.pos.update(rover=e["rover"], sol_min=e["sol_min"])
         elif kind == "sol":
             ps.update(rover=e["rover"], sol=e["sol"], index=e["index"], total=e["total"], camera=None)
+            if self.sol_samples and self.sol_samples[-1][1] > e["index"]:      # a new rover started
+                self.sol_samples.clear()
+            self.sol_samples.append((time.time(), e["index"]))
             if self.mode == "download":
                 self.pos["sol"] = e["sol"]
         elif kind == "camera":
@@ -1866,6 +2001,7 @@ class MainWindow(QMainWindow):
             ps.update(scan_rover=e["rover"], scan_index=e["index"], scan_total=e["total"])
 
     def _on_done(self, mode: str, value) -> None:
+        self.active_scraper = None
         cancelled = self.cancel.is_set()
         paused = mode == "download" and cancelled and self.pausing
         if mode == "download":
@@ -1917,7 +2053,7 @@ class MainWindow(QMainWindow):
     def _show_summary(self, r: Report, cancelled: bool, paused: bool = False) -> None:
         state = "Paused" if paused else "Stopped" if cancelled else "Finished"
         text = (f"<b>{state}.</b> Downloaded {r.downloaded:,} photos; {r.already_present:,} were already on disk; "
-                f"NASA refused {r.newly_unavailable + r.known_unavailable:,}. {r.sols_checked:,} sols checked.")
+                f"{r.newly_unavailable + r.known_unavailable:,} unavailable at NASA. {r.sols_checked:,} sols checked.")
         if r.left_as_is:
             text += (f" {r.left_as_is:,} Spirit/Opportunity folder(s) from another source were left as is, "
                      f"so nothing was duplicated.")
@@ -2132,7 +2268,7 @@ class MainWindow(QMainWindow):
         self.counters["Photos downloaded"].setText(f"{r.downloaded:,}")
         self.counters["Data downloaded"].setText(fmt_bytes(r.bytes_saved, s.data_unit))
         self.counters["Already had"].setText(f"{r.already_present:,}")
-        self.counters["NASA refused"].setText(f"{r.newly_unavailable + r.known_unavailable:,}")
+        self.counters["Unavailable at NASA"].setText(f"{r.newly_unavailable + r.known_unavailable:,}")
         errors = self.counters["Errors"]
         errors.setText(f"{len(r.problems):,}")
         tone = "err" if r.problems else ""
@@ -2140,11 +2276,18 @@ class MainWindow(QMainWindow):
             errors.setProperty("tone", tone)
             repolish(errors)
         ps = self.progress_state
-        frac = ps.get("index", 0) / max(1, ps.get("total", 0) or 1)
-        rover_elapsed = now - self.rover_started if self.rover_started else 0
-        if running and 0.01 < frac < 1 and rover_elapsed > 20:
+        remaining = (ps.get("total") or 0) - (ps.get("index") or 0)
+        while len(self.sol_samples) > 2 and now - self.sol_samples[1][0] >= 120:      # keep the last 2 minutes
+            self.sol_samples.popleft()
+        left = None
+        if running and remaining > 0 and len(self.sol_samples) >= 2:
+            (t0, i0), (_, i1) = self.sol_samples[0], self.sol_samples[-1]
+            span = now - t0
+            if span >= 20 and i1 > i0:
+                left = remaining / ((i1 - i0) / span)      # sols per second, recently
+        if left is not None:
             rest = " (this rover)" if ps.get("rover_count", 1) > 1 else ""
-            self.counters["Time left"].setText(f"~{fmt_duration(rover_elapsed * (1 - frac) / frac)}{rest}")
+            self.counters["Time left"].setText(f"~{fmt_duration(left)}{rest}")
         else:
             self.counters["Time left"].setText("–")
 
@@ -2170,7 +2313,7 @@ class MainWindow(QMainWindow):
             else:
                 gaps = f"{st.gap_sols:,} sols · up to {st.gap_photos:,}"
             new = "N/A" if st.new_sols is None else (
-                f"{st.new_sols:,} sols" if st.new_photos is None else f"{st.new_sols:,} sols · ~{st.new_photos:,}")
+                f"{st.new_sols:,} sols" if st.new_photos is None else f"{st.new_sols:,} sols · ~{st.new_photos:,} photos")
             values = {"Sols": sols, "Photos": fmt(st.photos), "Size": fmt_size(st.bytes),
                       "Latest sol": fmt(latest), "To download": new, "Gaps in your sols": gaps}
             for row, text in values.items():
@@ -2181,19 +2324,15 @@ class MainWindow(QMainWindow):
             self.rover_status[rover].setText(disk + (f" · latest {latest:,}" if latest is not None else ""))
         self.lib_note.setVisible(has_new)      # only once "To download" shows numbers
         if not scanned:
+            self.outdated_note.setVisible(False)
             self.scanned_label.setText("Not scanned yet")
             self.lib_hint.setText("Click Quick scan to check this folder." if folder else
                                   "Choose a photo folder, then click Quick scan.")
             self.lib_hint.setVisible(True)
         else:
             outdated = status.outdated
-            self.scanned_label.setText(("From before your last download · Quick scan to update" if outdated else
-                                        f"Last scanned: {fmt_when(max(scanned))}"))
-            self.scanned_label.setToolTip(
-                "These numbers were counted before your last download, so they don't include the photos it "
-                "added. Click Quick scan to count again." if outdated else "")
-            self.scanned_label.setProperty("tone", "warn" if outdated else "")
-            repolish(self.scanned_label)
+            self.scanned_label.setText(f"Last scanned: {fmt_when(max(scanned))}")
+            self.outdated_note.setVisible(outdated)
             self.lib_hint.setVisible(False)
 
     # ---- closing -----------------------------------------------------------------------------------------
@@ -2224,7 +2363,7 @@ def main() -> int:
         app.setWindowIcon(QIcon(icon))
 
     if chosen_state_dir() is None:                  # first run: ask where the app's files go
-        apply_theme(app, DARK if system_is_dark(app) else LIGHT)
+        apply_theme(app, DARK)                       # the default theme, until settings exist
         setup = SetupDialog()
         if setup.exec() != QDialog.DialogCode.Accepted:
             return 0
@@ -2233,7 +2372,7 @@ def main() -> int:
 
     win = MainWindow(app)
     win._apply_theme()
-    try:   # follow Windows light/dark changes while "Match Windows" is chosen
+    try:   # follow the operating system's light/dark changes while "Match operating system" is chosen
         app.styleHints().colorSchemeChanged.connect(
             lambda *_: win._apply_theme() if win.settings.theme == "system" else None)
     except AttributeError:

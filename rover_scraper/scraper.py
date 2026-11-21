@@ -13,10 +13,10 @@ from typing import Callable, Iterable, Iterator
 import requests
 
 from api import Cancelled, MarsVistaClient, Photo
-from download import fetch_bytes, head_size, make_session, save_new_file
+from download import fetch_bytes, file_extension, head_size, make_session, save_new_file
 from pds import is_pds_rover
-from plan import (Action, CameraPlan, cameras_short, disk_camera_counts, exact_match, last_sol_on_disk,
-                  plan_sol)
+from plan import (Action, CameraPlan, cameras_short, disk_camera_counts, exact_match, is_photo_file,
+                  last_sol_on_disk, plan_sol)
 from state import PERMANENT_STATUSES, Unavailable
 
 
@@ -29,7 +29,7 @@ class Report:
     downloaded: int = 0
     bytes_saved: int = 0                 # size of the photos written to disk this run
     bytes_received: int = 0              # all photo data received (includes fills that turned out to be present)
-    already_present: int = 0             # FILL: matched an existing file by size or bytes, not saved again
+    already_present: int = 0             # photos already on disk: in complete sols, or matched while filling
     would_download: int = 0              # dry run: upper bound (a FILL may find some already present)
     newly_unavailable: int = 0           # NASA refused (403/404/410) this run; remembered for next time
     known_unavailable: int = 0           # skipped because NASA refused them on an earlier run
@@ -56,19 +56,24 @@ class Scraper:
                  cancel: threading.Event | None = None, fetch=fetch_bytes, head=head_size,
                  unavailable: Unavailable | None = None, workers: int = 6,
                  progress: Callable[[dict], None] | None = None,
-                 cameras: dict[str, set[str]] | None = None, limiter=None):
+                 cameras: dict[str, set[str]] | None = None, limiter=None,
+                 detail: Callable[[str], None] | None = None):
         """progress(event) receives dicts such as {"event": "sol", "rover", "sol", "index", "total"} for the GUI.
         cameras maps a rover name to the camera names to include; a rover not in the map gets all cameras.
-        limiter (ratelimit.FileLimiter) caps how many photos are downloaded per minute/hour/day."""
+        limiter (ratelimit.FileLimiter) caps how many photos are downloaded per minute/hour/day.
+        detail(message) receives extra lines for a verbose log (every sol and photo); off by default.
+        workers and limiter may be changed while a run is going: each camera folder uses the current values."""
         self.client, self.dest, self.dry_run, self.log = client, dest, dry_run, log
         self.workers = max(1, workers)
-        self.http = http or make_session(self.workers)
+        # Room for up to 16 parallel downloads, so the number can be raised while a run is going.
+        self.http = http or make_session(16)
         self.cancel = cancel or threading.Event()
         self.fetch, self.head = fetch, head
         self.unavailable = unavailable or Unavailable(None)
         self.progress = progress or (lambda event: None)
         self.cameras = cameras or {}
         self.limiter = limiter
+        self.detail = detail or (lambda message: None)
 
     def run(self, rover: str, sol_min: int, sol_max: int, report: Report | None = None,
             new_only: bool = False, resume_from: int | None = None) -> Report:
@@ -125,13 +130,22 @@ class Scraper:
                 if disk is not None:
                     if allowed is None and known_total and exact_match(disk, summary.total_photos, list(summary.cameras)):
                         report.sols_skipped_quick += 1
+                        report.already_present += sum(disk.values())
+                        self.detail(f"     {rover}/{sol}: complete, {sum(disk.values())} photo(s) on disk match the "
+                                    f"list")
                         continue
                     counts = self.client.camera_counts(rover, sol)
                     if allowed is not None:
                         counts = {c: n for c, n in counts.items() if c in allowed}
                     if not cameras_short(disk, counts, unavailable):
                         report.sols_skipped_counts += 1
+                        on_disk = sum(n for c, n in disk.items() if allowed is None or c in allowed)
+                        report.already_present += on_disk
+                        self.detail(f"     {rover}/{sol}: complete by camera, {on_disk} photo(s) on disk "
+                                    f"({', '.join(f'{c} {n}' for c, n in sorted(counts.items()))})")
                         continue
+                self.detail(f"     {rover}/{sol}: listing photos"
+                            + ("" if disk is None else f" ({sum(disk.values())} on disk)"))
                 photos = self.client.photos_for_sol(rover, sol)
             except Cancelled:
                 report.cancelled = True
@@ -182,7 +196,7 @@ class Scraper:
         completed as usual. Uses size checks only (no downloads)."""
         if not (is_pds_rover(plan.rover) and plan.action is Action.FILL and plan.existing):
             return False
-        sizes = {e.stat().st_size for e in os.scandir(plan.folder) if e.name.isdigit() and e.is_file()}
+        sizes = {e.stat().st_size for e in os.scandir(plan.folder) if is_photo_file(e)}
         known = False
         results = self._ordered_parallel(self.head, plan.photos)
         try:
@@ -218,6 +232,9 @@ class Scraper:
 
         todo = [p for p in plan.photos if p.id not in self.unavailable]
         report.known_unavailable += len(plan.photos) - len(todo)
+        if len(todo) < len(plan.photos):
+            self.detail(f"     {where}: skipping {len(plan.photos) - len(todo)} photo(s) NASA refused on an earlier "
+                        f"run")
         have = Counter()
         if plan.action is Action.FILL:
             skipped = len(plan.photos) - len(todo)
@@ -248,8 +265,12 @@ class Scraper:
                 if have[h] > 0:
                     have[h] -= 1
                     report.already_present += 1
+                    self.detail(f"     {where}: {photo.url.rsplit('/', 1)[-1]} is already here (same bytes)")
                     continue
-                save_new_file(os.path.join(plan.folder, str(index)), result)
+                name = f"{index}{file_extension(result)}"
+                save_new_file(os.path.join(plan.folder, name), result)
+                self.detail(f"     {where}/{name}: saved {len(result) / 1024:,.0f} KB "
+                            f"({photo.url.rsplit('/', 1)[-1]})")
                 index += 1
                 report.downloaded += 1
                 report.bytes_saved += len(result)
@@ -266,7 +287,7 @@ class Scraper:
     def _drop_by_size(self, folder: str, photos: list[Photo], report: Report) -> list[Photo]:
         """Cheap first pass for FILL: a listed photo whose remote size (HEAD, no download) equals the size of a
         file already in the folder is taken as present. Only the rest are downloaded and compared by bytes."""
-        sizes = Counter(e.stat().st_size for e in os.scandir(folder) if e.name.isdigit() and e.is_file())
+        sizes = Counter(e.stat().st_size for e in os.scandir(folder) if is_photo_file(e))
         keep = []
         for photo, size in self._ordered_parallel(self.head, photos):
             if isinstance(size, int) and sizes[size] > 0:
@@ -281,6 +302,8 @@ class Scraper:
         if status in PERMANENT_STATUSES:
             self.unavailable.add(photo, status)   # don't count it as missing on later runs
             report.newly_unavailable += 1
+            self.detail(f"     {where}: NASA refused {photo.url.rsplit('/', 1)[-1]} (HTTP {status}); "
+                        f"remembered and skipped from now on")
         else:                                      # temporary: the next run tries again
             report.problems.append(f"{where}: photo {photo.id} not downloaded: {error}")
             self.log(f"ERROR {where}: photo {photo.id}: {error}")
@@ -289,7 +312,7 @@ class Scraper:
     def _existing_hashes(folder: str) -> list[str]:
         out = []
         for e in os.scandir(folder):
-            if e.name.isdigit() and e.is_file():
+            if is_photo_file(e):
                 with open(e.path, "rb") as f:
                     out.append(_sha256(f.read()))
         return out

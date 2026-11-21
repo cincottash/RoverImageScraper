@@ -149,7 +149,9 @@ jobs:
             latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
             latest=${latest:-v0.0.0}
             IFS=. read -r major minor patch <<< "${latest#v}"
-            message=$(git log -1 --format=%B "$GITHUB_SHA")   # the merged PR's title and description
+            # Only the merged PR's title (the commit's first line). Not the description, which may mention the
+            # markers without meaning them.
+            message=$(git log -1 --format=%s "$GITHUB_SHA")
             if grep -qi '\[major\]' <<< "$message"; then
               version="v$((major + 1)).0.0"
             elif grep -qi '\[minor\]' <<< "$message"; then

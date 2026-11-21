@@ -1,4 +1,4 @@
-"""Download Mars rover photos into <dest>/<Rover>/<sol>/<CAMERA>/<n>.
+"""Download Mars rover photos into <dest>/<Rover>/<sol>/<CAMERA>/<n>.<type>.
 
 Run:  python rover_scraper/main.py <dest> [options]     (see README.md, or --help)
 """

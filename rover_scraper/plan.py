@@ -1,6 +1,7 @@
 """Decide what is missing on disk. Pure logic: reads directory listings only, never file contents.
 
-Layout (unchanged from the original scraper): <dest>/<Rover>/<sol>/<CAMERA>/<n>, no extension, n = 0, 1, 2...
+Layout: <dest>/<Rover>/<sol>/<CAMERA>/<n>.<ext>, n = 0, 1, 2... and ext the photo's file type (jpg, png...).
+Files named just <n> (no extension, as older versions saved them) count the same way.
 The order of photos inside a camera folder does not matter (the user's rule), so completeness is judged by
 counts: a folder with at least as many files as the API lists is complete. Curiosity folders from the old API
 often hold more (NASA thumbnails, which Mars Vista doesn't list).
@@ -8,10 +9,23 @@ often hold more (NASA thumbnails, which Mars Vista doesn't list).
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from enum import Enum
 
 from api import Photo
+
+_PHOTO_NAME = re.compile(r"(\d+)(?:\.[A-Za-z0-9]{1,5})?")
+
+
+def photo_number(name: str) -> int | None:
+    """The number of a photo file named <n> or <n>.<ext> (such as 12 or 12.jpg); None for any other name."""
+    m = _PHOTO_NAME.fullmatch(name)
+    return int(m.group(1)) if m else None
+
+
+def is_photo_file(entry: os.DirEntry) -> bool:
+    return photo_number(entry.name) is not None and entry.is_file()
 
 
 class Action(str, Enum):
@@ -35,7 +49,7 @@ class CameraPlan:
 def count_numbered(folder: str) -> tuple[int, int]:
     """(number of numbered files, next free number) for a camera folder. A missing folder is (0, 0)."""
     try:
-        numbers = [int(e.name) for e in os.scandir(folder) if e.name.isdigit() and e.is_file()]
+        numbers = [photo_number(e.name) for e in os.scandir(folder) if is_photo_file(e)]
     except FileNotFoundError:
         return 0, 0
     return len(numbers), (max(numbers) + 1 if numbers else 0)

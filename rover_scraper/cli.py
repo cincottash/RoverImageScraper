@@ -17,7 +17,7 @@ from state import Unavailable, default_state_dir
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Download Mars rover photos (Mars Vista and NASA PDS) into "
-                                            "<dest>/<Rover>/<sol>/<CAMERA>/<n>, adding only what's missing.")
+                                            "<dest>/<Rover>/<sol>/<CAMERA>/<n>.<type>, adding only what's missing.")
     p.add_argument("dest", help="folder to save photos into (must exist)")
     p.add_argument("--rovers", default=",".join(SUPPORTED_ROVERS),
                    help=f"comma-separated rover names (default: {','.join(SUPPORTED_ROVERS)})")
@@ -35,6 +35,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--new-only", action="store_true",
                    help="only download sols after the last one on disk; don't check existing sols for gaps")
     p.add_argument("--cameras", help="comma-separated camera names to include (default: all)")
+    p.add_argument("--verbose", action="store_true", help="also list every sol checked and every photo saved")
     p.add_argument("--max-files", type=int, help="download at most this many photos per --per period")
     p.add_argument("--per", choices=list(PERIODS), default="hour",
                    help="period for --max-files (default: %(default)s)")
@@ -95,7 +96,8 @@ def main(argv: list[str] | None = None) -> int:
         limiter = FileLimiter(args.max_files, PERIODS[args.per], cancel=cancel, on_wait=_print_limit_wait)
         print(f"Download limit: at most {args.max_files:,} photos per {args.per}.")
     scraper = Scraper(sources, args.dest, dry_run=args.dry_run, unavailable=unavailable, workers=args.workers,
-                      cameras=cameras, limiter=limiter, cancel=cancel)
+                      cameras=cameras, limiter=limiter, cancel=cancel,
+                      detail=(lambda m: print(m, flush=True)) if args.verbose else None)
     report = Report()
     try:
         for rover in rovers:
@@ -123,8 +125,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Would download: up to {report.would_download} file(s)")
     else:
         print(f"Downloaded: {report.downloaded} file(s), {report.bytes_saved / 1024 ** 3:,.2f} GB; "
-              f"already on disk (same bytes): {report.already_present}")
-        print(f"NASA refused (403/404): {report.newly_unavailable} new, {report.known_unavailable} known "
+              f"already on disk: {report.already_present}")
+        print(f"Unavailable at NASA (refused, HTTP 403/404): {report.newly_unavailable} new, "
+              f"{report.known_unavailable} known "
               f"(remembered in {unavailable.path})")
     if report.left_as_is:
         print(f"Spirit/Opportunity folders from another source left as is (no duplicates): {report.left_as_is}")
