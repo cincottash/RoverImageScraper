@@ -102,11 +102,12 @@ What the window offers:
   When the limit is reached, an amber banner shows a countdown, and the download carries on by itself afterwards.
   Below it, *NASA archive* shows how many requests went to NASA's PDS archive this session (Spirit and
   Opportunity). That archive needs no key and has no request limit, so it's a count, not a meter.
-- **Activity:** the same log the command line prints.
+- **Activity:** the same log the command line prints. *Hide* collapses it to its title bar and gives the space
+  to the cards above.
 - **Menus:**
-  - *File*: choose or open the photo folder, quit.
-  - *Settings*: retry photos NASA refused on the next run, open the app data folder, change where it is, and
-    reset the download settings (rovers, cameras, sol range, limit and so on) to their defaults.
+  - *File*: choose or open the photo folder, *Settings*, quit.
+  - *File > Settings*: retry photos NASA refused on the next run, open the app data folder, change where it is,
+    and reset the download settings (rovers, cameras, sol range, limit and so on) to their defaults.
   - *View*: units for data (KB/MB/GB/TB) and speed (KB/s, MB/s, Mbit/s), how long the speed is averaged over,
     light/dark theme, showing or hiding the activity log, and *Reset view options*.
   - *Help*: the Mars Vista website and About.
@@ -116,7 +117,7 @@ folder* holds settings, scan results, request counts and the list of photos NASA
 can be on any drive, separate from the program and from each other. The suggested app data folder is
 `%LOCALAPPDATA%\RoverImageScraper\` (on macOS/Linux, `~/.local/share/RoverImageScraper/`). The choice is
 remembered in the Windows registry for your user (`HKCU\Software\RoverImageScraper`), and the command line uses
-the same folder. To move it later, use *Settings > Change app data folder*: the files are copied (the originals
+the same folder. To move it later, use *File > Settings > Change app data folder*: the files are copied (the originals
 are left in place) and the app restarts. Nothing is ever kept in the repo or the photo folder.
 
 ## Command line
