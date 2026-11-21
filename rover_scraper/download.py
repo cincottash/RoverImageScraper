@@ -13,6 +13,22 @@ class DownloadError(Exception):
         self.status = status
 
 
+class NasaStatus:
+    """When NASA's image servers last pushed back (HTTP 429 or 5xx). Read by the GUI to show "NASA busy"."""
+
+    def __init__(self):
+        self.last_busy = 0.0
+
+    def mark_busy(self) -> None:
+        self.last_busy = time.time()
+
+    def busy_recently(self, seconds: float = 30) -> bool:
+        return time.time() - self.last_busy < seconds
+
+
+NASA_STATUS = NasaStatus()
+
+
 def fetch_bytes(session: requests.Session, url: str, timeout: float = 120, retries: int = 4,
                 sleep=time.sleep) -> bytes:
     last: Exception | None = None
@@ -31,6 +47,7 @@ def fetch_bytes(session: requests.Session, url: str, timeout: float = 120, retri
             last = DownloadError(f"HTTP {r.status_code} for {url}", status=r.status_code)
             if r.status_code < 500 and r.status_code != 429:
                 raise last
+            NASA_STATUS.mark_busy()
         except (requests.ConnectionError, requests.Timeout) as e:
             last = e
         if attempt < retries:

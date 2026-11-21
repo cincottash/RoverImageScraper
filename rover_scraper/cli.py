@@ -1,12 +1,14 @@
-"""Command line: python rover_scraper/main.py <dest> [--rovers ...] [--sol-min N] [--sol-max N] [--dry-run] [--allow-existing]"""
+"""Command line: python rover_scraper/main.py <dest> [--allow-existing] [--new-only] [--dry-run] [options]"""
 from __future__ import annotations
 
 import argparse
 import json
 import os
 import sys
+import time
 
 from api import VERIFIED_ROVERS, ApiError, MarsVistaClient, load_api_key
+from ratelimit import RequestTracker
 from scraper import Report, Scraper
 from state import Unavailable, default_state_dir
 
@@ -30,7 +32,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--workers", type=int, default=6, help="parallel downloads (default: %(default)s)")
     p.add_argument("--retry-unavailable", action="store_true",
                    help="forget remembered 403/404 photos and try them again")
+    p.add_argument("--new-only", action="store_true",
+                   help="only download sols after the last one on disk; don't check existing sols for gaps")
+    p.add_argument("--cameras", help="comma-separated camera names to include (default: all)")
     return p.parse_args(argv)
+
+
+def _print_wait(seconds: float, reason: str) -> None:
+    resume = time.strftime("%H:%M", time.localtime(time.time() + seconds))
+    m, s = divmod(int(seconds), 60)
+    print(f"Rate limited by Mars Vista ({reason}): waiting {m}:{s:02d}, resumes about {resume}. "
+          f"No action needed.", flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,8 +51,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: folder {args.dest} does not exist", file=sys.stderr)
         return 2
 
+    tracker = RequestTracker(os.path.join(args.state_dir, "requests.json"))
     try:
-        client = MarsVistaClient(load_api_key())
+        client = MarsVistaClient(load_api_key(), tracker=tracker, on_wait=_print_wait)
         known = {r.name.lower(): r for r in client.rovers()}
     except ApiError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -66,16 +79,24 @@ def main(argv: list[str] | None = None) -> int:
 
     unavailable = Unavailable(os.path.join(args.state_dir, "unavailable.json"),
                               ignore_existing=args.retry_unavailable)
-    scraper = Scraper(client, args.dest, dry_run=args.dry_run, unavailable=unavailable, workers=args.workers)
+    wanted = {c.strip().upper() for c in args.cameras.split(",") if c.strip()} if args.cameras else None
+    cameras = {r.name: wanted for r in rovers} if wanted else None
+    scraper = Scraper(client, args.dest, dry_run=args.dry_run, unavailable=unavailable, workers=args.workers,
+                      cameras=cameras)
     report = Report()
     try:
         for rover in rovers:
             sol_max = rover.max_sol if args.sol_max is None else min(args.sol_max, rover.max_sol)
-            print(f"== {rover.name}: sols {args.sol_min}..{sol_max}")
-            scraper.run(rover.name, args.sol_min, sol_max, report)
+            print(f"== {rover.name}: sols {args.sol_min}..{sol_max}" + (" (new sols only)" if args.new_only else ""))
+            scraper.run(rover.name, args.sol_min, sol_max, report, new_only=args.new_only)
     except KeyboardInterrupt:
         report.cancelled = True
         print("\nInterrupted. Finished files are kept; re-run to continue.")
+    finally:
+        tracker.save()
+    usage = tracker.usage()
+    print(f"\nMars Vista requests (estimated): {usage.hour:,} of {usage.hourly_limit:,} this hour, "
+          f"{usage.day:,} of {usage.daily_limit:,} today")
 
     print(f"\nSols with photos checked: {report.sols_checked} "
           f"({report.sols_skipped_quick} complete by manifest match, "

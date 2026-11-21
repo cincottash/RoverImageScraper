@@ -12,9 +12,10 @@ from typing import Callable, Iterable, Iterator
 
 import requests
 
-from api import MarsVistaClient, Photo
+from api import Cancelled, MarsVistaClient, Photo
 from download import fetch_bytes, head_size, make_session, save_new_file
-from plan import Action, CameraPlan, cameras_short, disk_camera_counts, exact_match, plan_sol
+from plan import (Action, CameraPlan, cameras_short, disk_camera_counts, exact_match, last_sol_on_disk,
+                  plan_sol)
 from state import PERMANENT_STATUSES, Unavailable
 
 
@@ -29,6 +30,7 @@ class Report:
     would_download: int = 0              # dry run: upper bound (a FILL may find some already present)
     newly_unavailable: int = 0           # NASA refused (403/404/410) this run; remembered for next time
     known_unavailable: int = 0           # skipped because NASA refused them on an earlier run
+    sols_with_work: int = 0              # sols that needed (or, in a dry run, would need) downloads
     problems: list[str] = field(default_factory=list)
     cancelled: bool = False
 
@@ -48,48 +50,86 @@ class Scraper:
     def __init__(self, client: MarsVistaClient, dest: str, http: requests.Session | None = None,
                  dry_run: bool = False, log: Callable[[str], None] = print,
                  cancel: threading.Event | None = None, fetch=fetch_bytes, head=head_size,
-                 unavailable: Unavailable | None = None, workers: int = 6):
+                 unavailable: Unavailable | None = None, workers: int = 6,
+                 progress: Callable[[dict], None] | None = None,
+                 cameras: dict[str, set[str]] | None = None):
+        """progress(event) receives dicts such as {"event": "sol", "rover", "sol", "index", "total"} for the GUI.
+        cameras maps a rover name to the camera names to include; a rover not in the map gets all cameras."""
         self.client, self.dest, self.dry_run, self.log = client, dest, dry_run, log
         self.workers = max(1, workers)
         self.http = http or make_session(self.workers)
         self.cancel = cancel or threading.Event()
         self.fetch, self.head = fetch, head
         self.unavailable = unavailable or Unavailable(None)
+        self.progress = progress or (lambda event: None)
+        self.cameras = cameras or {}
 
-    def run(self, rover: str, sol_min: int, sol_max: int, report: Report | None = None) -> Report:
+    def run(self, rover: str, sol_min: int, sol_max: int, report: Report | None = None,
+            new_only: bool = False) -> Report:
+        """Check sols sol_min..sol_max in order and add what's missing. new_only skips sols up to the last sol
+        already on disk, so existing sols aren't checked for gaps (much faster when they're known complete)."""
         report = report or Report()
-        manifest = self.client.manifest(rover)
-        for sol in sorted(s for s in manifest if sol_min <= s <= sol_max):
+        if new_only:
+            last = last_sol_on_disk(self.dest, rover)
+            if last is not None:
+                sol_min = max(sol_min, last + 1)
+        try:
+            manifest = self.client.manifest(rover)
+        except Cancelled:
+            report.cancelled = True
+            return report
+        allowed = self.cameras.get(rover)
+        sols = sorted(s for s in manifest if sol_min <= s <= sol_max)
+        self.progress({"event": "rover", "rover": rover, "total": len(sols), "sol_min": sol_min,
+                       "sol_max": sol_max})
+        for index, sol in enumerate(sols, 1):
             if self.cancel.is_set():
                 report.cancelled = True
                 break
             report.sols_checked += 1
             summary = manifest[sol]
+            manifest_cams = [c for c in summary.cameras if allowed is None or c in allowed]
+            if not manifest_cams:
+                continue
+            self.progress({"event": "sol", "rover": rover, "sol": sol, "index": index, "total": len(sols)})
             unavailable = self.unavailable.per_camera(rover, sol)
             if report.sols_checked % 100 == 0:
                 self.log(f"... {rover}: checked {report.sols_checked} sols, now at sol {sol}")
             try:
                 disk = disk_camera_counts(self.dest, rover, sol)
                 if disk is None and self.dry_run:
-                    # Whole sol is missing: the manifest already gives its size, no listing needed.
+                    # Whole sol is missing: the manifest already gives its size, no listing needed. With a
+                    # camera filter this is an upper bound, since the manifest doesn't split photos by camera.
                     self.log(f"PLAN {rover}/{sol}: new sol, {summary.total_photos} file(s) "
-                             f"in {len(summary.cameras)} camera(s)")
-                    report.actions["new"] += len(summary.cameras)
+                             f"in {len(manifest_cams)} camera(s)")
+                    report.actions["new"] += len(manifest_cams)
                     report.would_download += summary.total_photos
+                    report.sols_with_work += 1
                     continue
                 if disk is not None:
-                    if exact_match(disk, summary.total_photos, list(summary.cameras)):
+                    if allowed is None and exact_match(disk, summary.total_photos, list(summary.cameras)):
                         report.sols_skipped_quick += 1
                         continue
-                    if not cameras_short(disk, self.client.camera_counts(rover, sol), unavailable):
+                    counts = self.client.camera_counts(rover, sol)
+                    if allowed is not None:
+                        counts = {c: n for c, n in counts.items() if c in allowed}
+                    if not cameras_short(disk, counts, unavailable):
                         report.sols_skipped_counts += 1
                         continue
                 photos = self.client.photos_for_sol(rover, sol)
+            except Cancelled:
+                report.cancelled = True
+                break
             except Exception as e:  # noqa: BLE001 - record and carry on with the next sol
                 report.problems.append(f"{rover} sol {sol}: listing failed: {e}")
                 self.log(f"ERROR {rover} sol {sol}: listing failed: {e}")
                 continue
-            for plan in plan_sol(self.dest, rover, sol, photos, unavailable):
+            if allowed is not None:
+                photos = [p for p in photos if p.camera in allowed]
+            plans = plan_sol(self.dest, rover, sol, photos, unavailable)
+            if any(p.action is not Action.COMPLETE for p in plans):
+                report.sols_with_work += 1
+            for plan in plans:
                 if self.cancel.is_set():
                     report.cancelled = True
                     break
@@ -118,6 +158,7 @@ class Scraper:
         report.actions[plan.action.value] += 1
         if plan.action is Action.COMPLETE:
             return
+        self.progress({"event": "camera", "rover": plan.rover, "sol": plan.sol, "camera": plan.camera})
         n = len(plan.photos)
         if plan.action is Action.NEW:
             self.log(f"{'PLAN' if self.dry_run else 'GET '} {where}: new folder, {n} file(s)")

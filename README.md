@@ -33,15 +33,46 @@ numbered 0, 1, 2… within each camera folder. Files have no extension, but they
    .venv\Scripts\pip install -r requirements.txt
    ```
    On macOS or Linux, use `python3 -m venv .venv` and `.venv/bin/pip`.
-3. Get a free API key at [marsvista.dev](https://marsvista.dev) (sign-up with an email address), then store it in
-   an environment variable:
-   ```bat
-   setx MARSVISTA_API_KEY your_key_here
-   ```
-   Open a **new** terminal afterwards so it sees the variable. On macOS or Linux, use
-   `export MARSVISTA_API_KEY=...` in your shell profile. Keep the key out of git.
+3. Get a free API key at [marsvista.dev](https://marsvista.dev) (sign-up with an email address).
+   - **Desktop app:** paste the key into the API key box. It's saved in the system credential store (Windows
+     Credential Manager) and used by the command line too.
+   - **Command line only:** you can instead store it in an environment variable, then open a **new** terminal:
+     ```bat
+     setx MARSVISTA_API_KEY your_key_here
+     ```
+     On macOS or Linux, use `export MARSVISTA_API_KEY=...` in your shell profile.
 
-## Usage
+   Keep the key out of git.
+
+## Desktop app
+
+From the project folder:
+
+```bat
+.venv\Scripts\python rover_scraper\gui.py
+```
+
+1. Choose a **photo folder** (any drive) and paste your **API key**.
+2. Click **Quick scan** to see what's already in the folder and what's new on Mars Vista.
+3. Optionally click **Preview** to see roughly how many photos and gigabytes a download would add.
+4. Click **Start**. **Stop** keeps every finished photo; clicking Start again continues where it left off.
+
+What the window offers:
+
+- **Rovers and cameras:** tick the rovers to download, and open *Cameras* to leave out cameras you don't want.
+- **Check existing sols for missing photos:** when ticked, the run starts at sol 0 and fills gaps in sols you
+  already have (slower). Untick it to only download sols after the last one in the folder.
+- **Sols from/to:** limit the run to a range of sols. Leave blank for all.
+- **Library status:** sols, photos and size on disk, the latest sol available, and how many new sols there are.
+  *Full check* also finds gaps in existing sols; it uses about one API request per sol on disk, so it asks first.
+- **API usage:** how many Mars Vista requests have been used this hour and today, counted by the app. When the
+  limit is reached, an amber banner shows a countdown, and the download carries on by itself afterwards.
+- **Activity:** the same log the command line prints.
+
+Settings, scan results and the request counts are saved in `%LOCALAPPDATA%\RoverImageScraper\` (on macOS/Linux,
+`~/.local/share/RoverImageScraper/`), never in the repo or the photo folder.
+
+## Command line
 
 Pass the folder you want the photos saved in. It can be on any drive, and it must already exist. In the examples
 below, replace `C:\path\to\MarsPhotos` with your folder (on macOS or Linux, a path such as `~/MarsPhotos`).
@@ -71,6 +102,8 @@ To run from any other folder, use full paths to both `python.exe` (inside `.venv
 | `--sol-min`, `--sol-max` | Sol range to check (default: all sols) |
 | `--dry-run` | Show what would be downloaded; write nothing |
 | `--allow-existing` | Required to add to a folder that already contains rover data |
+| `--new-only` | Only download sols after the last one in the folder; don't check existing sols for gaps |
+| `--cameras` | Comma-separated camera names to include, e.g. `NAVCAM,MAST` (default: all) |
 | `--workers` | Parallel downloads (default 6) |
 | `--report <file>` | Save a JSON summary of the run |
 | `--retry-unavailable` | Retry photos NASA refused on earlier runs (see below) |
@@ -83,8 +116,9 @@ To run from any other folder, use full paths to both `python.exe` (inside `.venv
   after the highest existing file.
 - A run interrupted with Ctrl+C keeps every finished file and leaves no partial files. Run the same command
   again to continue.
-- If Mars Vista's rate limit (10,000 requests per hour) is reached, the program waits for it to reset and then
-  carries on.
+- Mars Vista allows 10,000 requests per hour and 100,000 per day. The program counts its own requests, slows
+  down before reaching a limit, waits if the server asks it to, and then carries on. The command line prints a
+  line when it starts waiting and shows the counts at the end. Photo downloads come from NASA and don't count.
 - NASA no longer serves some older images (HTTP 403/404). These are remembered in
   `%LOCALAPPDATA%\RoverImageScraper\unavailable.json` (on macOS/Linux, `~/.local/share/RoverImageScraper/`) so
   they don't count as missing on every run.
@@ -103,10 +137,14 @@ To run from any other folder, use full paths to both `python.exe` (inside `.venv
 
 All code is in `rover_scraper/`:
 
-- `main.py`: the program to run.
+- `main.py`: the command-line program.
+- `gui.py`: the desktop app.
 - `cli.py`: command-line options and the end-of-run summary.
 - `api.py`: the Mars Vista client (the only code that knows the API).
+- `ratelimit.py`: counts API requests per hour and day, and waits near the limits.
 - `plan.py`: decides what's missing.
 - `scraper.py`: runs the checks and downloads.
+- `scan.py`: library status (quick scan and full check).
 - `download.py`: downloads that never overwrite existing files.
 - `state.py`: remembers photos NASA refuses to serve.
+- `settings.py`: the desktop app's saved settings.
