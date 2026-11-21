@@ -880,12 +880,6 @@ class MainWindow(QMainWindow):
             right.addWidget(c)
         self.activity_card = self._build_activity_card()
         right.addWidget(self.activity_card, 1)
-        # Shown only while the activity log is hidden, where the log was: bottom right, just above Start.
-        self.log_show_btn = link_button("Show activity ▴")
-        self.log_show_btn.setToolTip("Show the activity log again (also under View > Show activity log)")
-        self.log_show_btn.clicked.connect(lambda: self._set_log_visible(True))
-        self.log_show_btn.setVisible(False)
-        right.addWidget(self.log_show_btn, 0, Qt.AlignmentFlag.AlignRight)
 
         bottom = QFrame()
         bottom.setObjectName("bottomBar")
@@ -1486,13 +1480,14 @@ class MainWindow(QMainWindow):
         self._set_log_visible(not self.settings.show_log)
 
     def _set_log_visible(self, visible: bool) -> None:
-        # Shown: the activity log takes the spare height. Hidden: the whole card goes, the cards above share the
-        # space, and a "Show activity" link in the bottom bar brings it back. The log keeps recording either way.
-        self.activity_card.setVisible(visible)
-        self.log_show_btn.setVisible(not visible)
+        # Shown: the activity log takes the spare height. Hidden: the card shrinks to its header (with a "Show"
+        # link) at the bottom, and the cards above share the space. The log keeps recording either way.
+        self.log_view.setVisible(visible)
+        self.right_col.setStretchFactor(self.activity_card, 1 if visible else 0)
         for c in self.right_cards:
             self.right_col.setStretchFactor(c, 0 if visible else 1)
-        self.log_toggle.setText("Hide ▾")
+        self.log_toggle.setText("Hide ▾" if visible else "Show ▴")
+        self.log_toggle.setToolTip("" if visible else "Show the activity log (also under View > Show activity log)")
         if hasattr(self, "act_log") and self.act_log.isChecked() != visible:
             self.act_log.setChecked(visible)
         self.settings.show_log = visible
