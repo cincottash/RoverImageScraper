@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Secrets / local config (API key lives in MARSVISTA_API_KEY env var or here)
+.env
+config.local.*
+
+# Local test output, staging downloads, inventories of the photo dump
+staging/
+scratch/
+*.part
+
+# Local-only test suite (kept out of the repo)
+tests/
+requirements-dev.txt
