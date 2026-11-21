@@ -510,6 +510,14 @@ class MainWindow(QMainWindow):
         self.lib_cells: dict[tuple[str, str], QLabel] = {}
         for c, rover in enumerate(VERIFIED_ROVERS, 1):
             grid.addWidget(label(rover, "colHead"), 0, c)
+        tip = ("Only sols that have photos are counted. Sol numbers count every Mars day since landing, but on some "
+               "days the rover sent back no images (for example during solar conjunction, when the Sun blocks "
+               "communication with Earth).")
+        # Shown on the "To download" row, to the right of the last rover column.
+        self.lib_note = label("Not every sol has photos, so this can be fewer than the latest sol.", "muted",
+                              wrap=True)
+        self.lib_note.setToolTip(tip)
+        note_col = len(VERIFIED_ROVERS) + 1
         r = 1
         for title, rows in sections:
             grid.addWidget(label(title, "section"), r, 0, 1, len(VERIFIED_ROVERS) + 1)
@@ -520,18 +528,13 @@ class MainWindow(QMainWindow):
                     cell = label("N/A", "value")
                     self.lib_cells[(row_name, rover)] = cell
                     grid.addWidget(cell, r, c)
+                if row_name == "To download":
+                    grid.addWidget(self.lib_note, r, note_col)
+                    for rover in VERIFIED_ROVERS:
+                        self.lib_cells[(row_name, rover)].setToolTip(tip)
                 r += 1
-        grid.setColumnStretch(len(VERIFIED_ROVERS) + 1, 1)
+        grid.setColumnStretch(note_col, 1)
         lay.addLayout(grid)
-        tip = ("Only sols that have photos are counted. Sol numbers count every Mars day since landing, but on some "
-               "days the rover sent back no images (for example during solar conjunction, when the Sun blocks "
-               "communication with Earth).")
-        for rover in VERIFIED_ROVERS:
-            self.lib_cells[("To download", rover)].setToolTip(tip)
-        self.lib_note = label("Not every sol has photos, so “To download” can list fewer sols than the latest "
-                              "sol number.", "muted", wrap=True)
-        self.lib_note.setToolTip(tip)
-        lay.addWidget(self.lib_note)
         self.lib_hint = label("Click Quick scan to check this folder.", "muted")
         lay.addWidget(self.lib_hint)
         btns = QHBoxLayout()
