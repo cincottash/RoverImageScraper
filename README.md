@@ -27,16 +27,25 @@ folder tree. Run it again later and it downloads only what's new or missing.
 The layout is `<dest>/<Rover>/<sol>/<CAMERA>/<n>`. A *sol* is a Mars day counted from landing, and files are
 numbered 0, 1, 2… within each camera folder. Files have no extension, but they are ordinary JPEG images.
 
-## Download (Windows)
+## Download
 
-The easiest way to run it: download **RoverImageScraper.exe** from the
-[latest release](https://github.com/cincottash/RoverImageScraper/releases/latest) and double-click it. It needs no
-Python and installs nothing. On first run it asks where to keep its files and photos. You'll need a free Mars Vista
-API key (see step 3 below). More details: [Standalone app](#standalone-app-windows).
+The easiest way to run it is the ready-made app from the
+[latest release](https://github.com/cincottash/RoverImageScraper/releases/latest). It needs no Python and installs
+nothing. On first run it asks where to keep its files and photos. You'll need a free Mars Vista API key (see step 3
+below). More details: [Standalone app](#standalone-app).
+
+- **Windows:** download **RoverImageScraper.exe** and double-click it.
+- **Linux:** download **RoverImageScraper-x86_64.AppImage**, make it executable, and run it:
+  ```sh
+  chmod +x RoverImageScraper-x86_64.AppImage
+  ./RoverImageScraper-x86_64.AppImage
+  ```
+  (Or right-click it, tick *Allow executing file as program* in *Properties*, and double-click.)
+- **macOS:** run it from the source code (below).
 
 ## Setup (from the source code)
 
-These steps run the program from the source code: needed for the command line, or on macOS and Linux.
+These steps run the program from the source code: needed for the command line, or on macOS.
 
 1. Install **Python 3.10 or newer**.
 2. Clone the repo and create a virtual environment:
@@ -116,8 +125,8 @@ What the window offers:
 folder* holds settings, scan results, request counts and the list of photos NASA refused (a few megabytes). Each
 can be on any drive, separate from the program and from each other. The suggested app data folder is
 `%LOCALAPPDATA%\RoverImageScraper\` (on macOS/Linux, `~/.local/share/RoverImageScraper/`). The choice is
-remembered in the Windows registry for your user (`HKCU\Software\RoverImageScraper`), and the command line uses
-the same folder. To move it later, use *File > Settings > Change app data folder*: the files are copied (the originals
+remembered for your user, in the Windows registry (`HKCU\Software\RoverImageScraper`) or, on macOS/Linux, in
+`~/.config/RoverImageScraper/data_folder`. The command line uses the same folder. To move it later, use *File > Settings > Change app data folder*: the files are copied (the originals
 are left in place) and the app restarts. Nothing is ever kept in the repo or the photo folder.
 
 ## Command line
@@ -192,18 +201,23 @@ To run from any other folder, use full paths to both `python.exe` (inside `.venv
 - The order of photos within a camera folder follows Mars Vista's listing and may differ from folders made with
   the old API.
 
-## Standalone app (Windows)
+## Standalone app
 
-The desktop app is packaged with [PyInstaller](https://pyinstaller.org) into a single `RoverImageScraper.exe` of
-about 35 MB, attached to each [release](https://github.com/cincottash/RoverImageScraper/releases). It carries its own private copy of Python and the libraries, so it runs on a Windows PC without
-Python and needs nothing downloaded to start. Each time it starts it unpacks itself into Windows' temporary
-folder (about 90 MB); that copy is removed when it closes. On first run it asks where to keep its files (see
-above).
+The desktop app is packaged with [PyInstaller](https://pyinstaller.org) into a single file for each system, both
+attached to each [release](https://github.com/cincottash/RoverImageScraper/releases). Each carries its own private
+copy of Python and the libraries, so it runs without Python and needs nothing downloaded to start. On first run
+it asks where to keep its files (see above). The standalone app is the desktop app only; the command line runs
+from the source code as described above.
 
-Windows may show *"Windows protected your PC"* the first time, because the program isn't code-signed. Click
-*More info*, then *Run anyway*.
+**Windows: `RoverImageScraper.exe`** (about 35 MB). Each time it starts it unpacks itself into Windows' temporary
+folder (about 90 MB); that copy is removed when it closes. Windows may show *"Windows protected your PC"* the
+first time, because the program isn't code-signed. Click *More info*, then *Run anyway*.
 
-The standalone app is the desktop app only; the command line runs from the source code as described above.
+**Linux: `RoverImageScraper-x86_64.AppImage`** (an [AppImage](https://appimage.org), about 60 MB). It runs on
+64-bit Intel/AMD Linux distributions from about 2022 on: Ubuntu 22.04 or newer, Debian 12, Fedora 36 and
+similar. Make it executable first (see [Download](#download)). If it says FUSE is missing, either install it
+(`sudo apt install libfuse2` on Ubuntu/Debian) or run it with `--appimage-extract-and-run`. The API key is kept in
+your desktop's keyring (GNOME Keyring or KWallet); without one, enter the key each session.
 
 ### Building the .exe yourself
 
@@ -217,16 +231,28 @@ build-venv\Scripts\pip install -r requirements.txt -r packaging\requirements-bui
 build-venv\Scripts\python packaging\build_exe.py --out C:\path\to\builds
 ```
 
+### Building the AppImage yourself
+
+You need 64-bit Linux, Python 3.10, and [appimagetool](https://github.com/AppImage/appimagetool/releases). The
+AppImage runs on distributions at least as new as the one it's built on:
+
+```sh
+python3.10 -m venv build-venv
+build-venv/bin/pip install -r requirements.txt -r packaging/requirements-build.txt
+build-venv/bin/python packaging/build_appimage.py --out ~/builds --appimagetool /path/to/appimagetool
+```
+
 ### Releases (automatic builds)
 
-`.github/workflows/build-exe.yml` builds the `.exe` on GitHub's Windows machines:
+`.github/workflows/build-apps.yml` builds both on GitHub's machines (the `.exe` on Windows, the AppImage on
+Ubuntu 22.04):
 
-- On every pull request, it builds the `.exe`, checks that it starts, and keeps it for 14 days as a download on
-  the run's page (*Actions* tab), so changes can be tried before merging. Nothing is published.
-- When a version tag is pushed, it also publishes a release with the `.exe` attached:
-  ```bat
-  git tag v1.0.0
-  git push origin v1.0.0
+- On every pull request, it builds both, checks that each starts, and keeps them for 14 days as downloads on the
+  run's page (*Actions* tab), so changes can be tried before merging. Nothing is published.
+- When a version tag is pushed, it also publishes a release with both attached:
+  ```sh
+  git tag v1.1.0
+  git push origin v1.1.0
   ```
 
 ## Code layout
@@ -249,6 +275,8 @@ All code is in `rover_scraper/`:
 
 Building the standalone app:
 
-- `packaging/build_exe.py`: builds `RoverImageScraper.exe`.
+- `packaging/build_exe.py`: builds `RoverImageScraper.exe` (Windows).
+- `packaging/build_appimage.py`: builds `RoverImageScraper-x86_64.AppImage` (Linux).
+- `packaging/icon.svg`: the app icon.
 - `packaging/requirements-build.txt`: the build tools (PyInstaller), pinned.
-- `.github/workflows/build-exe.yml`: builds it on GitHub for pull requests and releases.
+- `.github/workflows/build-apps.yml`: builds both on GitHub for pull requests and releases.
