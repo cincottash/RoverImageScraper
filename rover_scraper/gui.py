@@ -134,6 +134,8 @@ def apply_theme(app: QApplication, t: dict) -> None:
         QLabel#big {{ font-size: 11pt; font-weight: 600; }}
         QLabel#value {{ font-weight: 600; }}
         QLabel#rowHead {{ color: {t['muted']}; }}
+        QLabel#section {{ color: {t['muted']}; font-size: 8pt; font-weight: 700; letter-spacing: 0.5px;
+                         padding-top: 6px; }}
         QLabel#colHead {{ font-weight: 600; }}
         QLineEdit, QSpinBox {{ background: {t['input']}; border: 1px solid {t['border']}; border-radius: 6px;
                               padding: 5px 8px; }}
@@ -501,16 +503,24 @@ class MainWindow(QMainWindow):
         grid = QGridLayout()
         grid.setHorizontalSpacing(24)
         grid.setVerticalSpacing(5)
-        self.lib_rows = ["Sols on disk", "Photos", "Size", "Latest sol", "New available", "Gaps"]
+        # Two groups, so what's in the folder isn't confused with what Mars Vista has.
+        sections = [("ON DISK", ["Sols", "Photos", "Size"]),
+                    ("ON MARS VISTA", ["Latest sol", "To download", "Gaps in your sols"])]
+        self.lib_rows = [row for _, rows in sections for row in rows]
         self.lib_cells: dict[tuple[str, str], QLabel] = {}
         for c, rover in enumerate(VERIFIED_ROVERS, 1):
             grid.addWidget(label(rover, "colHead"), 0, c)
-        for r, row_name in enumerate(self.lib_rows, 1):
-            grid.addWidget(label(row_name, "rowHead"), r, 0)
-            for c, rover in enumerate(VERIFIED_ROVERS, 1):
-                cell = label("N/A", "value")
-                self.lib_cells[(row_name, rover)] = cell
-                grid.addWidget(cell, r, c)
+        r = 1
+        for title, rows in sections:
+            grid.addWidget(label(title, "section"), r, 0, 1, len(VERIFIED_ROVERS) + 1)
+            r += 1
+            for row_name in rows:
+                grid.addWidget(label("   " + row_name, "rowHead"), r, 0)
+                for c, rover in enumerate(VERIFIED_ROVERS, 1):
+                    cell = label("N/A", "value")
+                    self.lib_cells[(row_name, rover)] = cell
+                    grid.addWidget(cell, r, c)
+                r += 1
         grid.setColumnStretch(len(VERIFIED_ROVERS) + 1, 1)
         lay.addLayout(grid)
         self.lib_hint = label("Click Quick scan to check this folder.", "muted")
@@ -1226,15 +1236,17 @@ class MainWindow(QMainWindow):
             latest = st.latest_sol if st.latest_sol is not None else self.rover_info.get(rover, {}).get("max_sol")
             sols = "N/A" if st.sols_on_disk is None else (
                 f"{st.sols_on_disk:,}" + (f"  ({st.first_sol:,}–{st.last_sol:,})" if st.sols_on_disk else ""))
-            if st.gap_sols is None:
+            if st.sols_on_disk == 0:
+                gaps = "None (folder empty)"
+            elif st.gap_sols is None:
                 gaps = "Not checked" if st.scanned_at else "N/A"
             elif st.gap_sols == 0:
                 gaps = "None found"
             else:
                 gaps = f"{st.gap_sols:,} sols · up to {st.gap_photos:,}"
             new = "N/A" if st.new_sols is None else f"{st.new_sols:,} sols · ~{st.new_photos:,}"
-            values = {"Sols on disk": sols, "Photos": fmt(st.photos), "Size": fmt_size(st.bytes),
-                      "Latest sol": fmt(latest), "New available": new, "Gaps": gaps}
+            values = {"Sols": sols, "Photos": fmt(st.photos), "Size": fmt_size(st.bytes),
+                      "Latest sol": fmt(latest), "To download": new, "Gaps in your sols": gaps}
             for row, text in values.items():
                 self.lib_cells[(row, rover)].setText(text)
             disk = "not scanned" if st.sols_on_disk is None else f"{st.sols_on_disk:,} sols on disk"
