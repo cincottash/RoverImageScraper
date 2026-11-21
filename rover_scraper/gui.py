@@ -18,7 +18,7 @@ import threading
 import time
 import traceback
 
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import QEvent, Qt, QTimer, QUrl
 from PySide6.QtGui import QActionGroup, QColor, QDesktopServices, QFont, QIntValidator, QKeySequence, QPalette
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QGridLayout,
                                QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
@@ -269,11 +269,39 @@ def card(title: str | None = None) -> tuple[QFrame, QVBoxLayout]:
     return frame, lay
 
 
-def label(text: str = "", name: str | None = None, wrap: bool = False) -> QLabel:
-    lbl = QLabel(text)
+class WrapLabel(QLabel):
+    """A word-wrapped label that always gets the height its text needs at its current width. Qt layouts
+    (grids especially) otherwise give it a single line and cut off the rest."""
+
+    def __init__(self, text: str = "", min_width: int = 0):
+        super().__init__(text)
+        self.setWordWrap(True)
+        if min_width:
+            self.setMinimumWidth(min_width)
+
+    def _fit(self) -> None:
+        need = self.heightForWidth(max(1, self.width()))
+        if need > 0 and self.minimumHeight() != need:
+            self.setMinimumHeight(need)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit()
+
+    def setText(self, text: str) -> None:
+        super().setText(text)
+        self._fit()
+
+    def changeEvent(self, event) -> None:     # font or style changes (theme switch) change the height needed
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            self._fit()
+
+
+def label(text: str = "", name: str | None = None, wrap: bool = False, min_width: int = 0) -> QLabel:
+    lbl = WrapLabel(text, min_width) if wrap else QLabel(text)
     if name:
         lbl.setObjectName(name)
-    lbl.setWordWrap(wrap)
     return lbl
 
 
@@ -379,7 +407,11 @@ class MainWindow(QMainWindow):
         self.last_summary = ""
 
         self.setWindowTitle("Rover Image Scraper")
-        self.resize(1180, 900)
+        self.setMinimumSize(900, 560)
+        # Open big enough to show everything without scrolling, but never larger than the screen.
+        avail = app.primaryScreen().availableGeometry() if app.primaryScreen() else None
+        self.resize(min(1200, avail.width() - 40) if avail else 1200,
+                    min(1000, avail.height() - 60) if avail else 900)
         self._build()
         self._build_menus()
         self._load_settings_into_widgets()
@@ -429,9 +461,15 @@ class MainWindow(QMainWindow):
         left_scroll.setWidget(left)
         body.addWidget(left_scroll)
 
-        right = QVBoxLayout()
+        # The right column scrolls too, so a small window or screen gets a scroll bar instead of squashed text.
+        right_scroll = QScrollArea()
+        right_scroll.setWidgetResizable(True)
+        right_w = QWidget()
+        right = QVBoxLayout(right_w)
+        right.setContentsMargins(0, 0, 6, 0)
         right.setSpacing(12)
-        body.addLayout(right, 1)
+        right_scroll.setWidget(right_w)
+        body.addWidget(right_scroll, 1)
 
         self._build_folder_card()
         self._build_key_card()
@@ -484,8 +522,8 @@ class MainWindow(QMainWindow):
         browse.clicked.connect(self._browse)
         row.addWidget(browse)
         lay.addLayout(row)
-        self.folder_hint = label("This folder doesn't exist yet. Start, Quick scan or Full check will offer to "
-                                 "create it.", "muted", wrap=True)
+        self.folder_hint = label("This folder doesn't exist yet. Start, Quick scan, Full check or Open folder "
+                                 "will offer to create it.", "muted", wrap=True)
         self.folder_hint.setProperty("tone", "warn")
         self.folder_hint.setVisible(False)
         lay.addWidget(self.folder_hint)
@@ -621,7 +659,8 @@ class MainWindow(QMainWindow):
                "communication with Earth).")
         # Shown on the "To download" row, to the right of the last rover column.
         self.lib_note = label("Not every sol has photos, so this can be fewer than the latest sol.", "muted",
-                              wrap=True)
+                              wrap=True, min_width=170)
+        self.lib_note.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self.lib_note.setToolTip(tip)
         note_col = len(ALL_ROVERS) + 1
         r = 1
@@ -635,7 +674,8 @@ class MainWindow(QMainWindow):
                     self.lib_cells[(row_name, rover)] = cell
                     grid.addWidget(cell, r, c)
                 if row_name == "To download":
-                    grid.addWidget(self.lib_note, r, note_col)
+                    # spans this row and the next, so the wrapped note doesn't stretch one row
+                    grid.addWidget(self.lib_note, r, note_col, 2, 1, Qt.AlignmentFlag.AlignTop)
                     for rover in ALL_ROVERS:
                         self.lib_cells[(row_name, rover)].setToolTip(tip)
                 r += 1
@@ -743,6 +783,7 @@ class MainWindow(QMainWindow):
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(5000)
         self.log_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.log_view.setMinimumHeight(80)
         lay.addWidget(self.log_view, 1)
         return frame
 
@@ -845,7 +886,7 @@ class MainWindow(QMainWindow):
         self.stop_btn.setEnabled((not idle and not self.cancel.is_set()) or (idle and bool(self.checkpoint)))
         self.stop_btn.setToolTip("Discard the paused download" if idle and self.checkpoint else
                                  "End this run. Finished photos are kept; the next Start begins from the start.")
-        self.open_btn.setEnabled(folder_exists)
+        self.open_btn.setEnabled(folder_given)
         for w in self.locked:
             w.setEnabled(idle)
         if hasattr(self, "act_choose"):
@@ -915,7 +956,7 @@ class MainWindow(QMainWindow):
             self.folder_edit.setText(os.path.normpath(folder))
 
     def _open_folder(self) -> None:
-        if os.path.isdir(self._folder()):
+        if self._ensure_folder():          # a missing folder: offers to create it, as Start does
             QDesktopServices.openUrl(QUrl.fromLocalFile(self._folder()))
 
     def _folder_changed(self) -> None:

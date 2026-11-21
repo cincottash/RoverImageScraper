@@ -53,7 +53,7 @@ From the project folder:
 ```
 
 1. Choose a **photo folder** (any drive) and paste your **API key**. If the folder doesn't exist yet, the app
-   offers to create it when you start.
+   offers to create it when you start, scan or open it.
 2. Click **Quick scan** to see what's already in the folder and what's new on Mars Vista.
 3. Optionally click **Preview** to see roughly how many photos and gigabytes a download would add.
 4. Click **Start**.
