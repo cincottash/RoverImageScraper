@@ -3,23 +3,21 @@
     <radialGradient id="space" cx="40%" cy="36%" r="75%">
       <stop offset="0" stop-color="#26346B"/>
       <stop offset="0.6" stop-color="#121A3A"/>
-      <stop offset="1" stop-color="#070A18"/>
+      <stop offset="1" stop-color="#0A0F24"/>
     </radialGradient>
     <linearGradient id="body" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0" stop-color="#FFFFFF"/>
       <stop offset="1" stop-color="#C9CFDA"/>
     </linearGradient>
   </defs>
-  <circle cx="128" cy="128" r="124" fill="url(#space)"/>
-  <circle cx="52" cy="70" r="3" fill="#FFFFFF"/>
-  <circle cx="80" cy="40" r="2" fill="#FFFFFF" opacity="0.8"/>
-  <circle cx="200" cy="176" r="3" fill="#FFFFFF"/>
-  <circle cx="186" cy="214" r="2" fill="#FFFFFF" opacity="0.7"/>
-  <circle cx="44" cy="150" r="2" fill="#FFFFFF" opacity="0.7"/>
-  <circle cx="214" cy="96" r="2.5" fill="#FFFFFF" opacity="0.85"/>
-  <circle cx="120" cy="226" r="2" fill="#FFFFFF" opacity="0.6"/>
-  <circle cx="64" cy="200" r="3" fill="#FFFFFF" opacity="0.9"/>
-  <g transform="translate(128 128) scale(1.2) rotate(-45) translate(-128 -128)">
+  <rect x="0" y="0" width="256" height="256" rx="56" fill="url(#space)"/>
+  <circle cx="200" cy="40" r="4" fill="#FFFFFF"/>
+  <circle cx="226" cy="84" r="3" fill="#FFFFFF" opacity="0.8"/>
+  <circle cx="40" cy="210" r="4" fill="#FFFFFF"/>
+  <circle cx="86" cy="232" r="3" fill="#FFFFFF" opacity="0.8"/>
+  <circle cx="30" cy="150" r="2.5" fill="#FFFFFF" opacity="0.7"/>
+  <circle cx="150" cy="22" r="2.5" fill="#FFFFFF" opacity="0.7"/>
+  <g transform="translate(128 128) scale(1.5) rotate(-45) translate(-128 -128)">
     <path d="M 110,176 Q 128,250 146,176 Z" fill="#F97316"/>
     <path d="M 117,176 Q 128,226 139,176 Z" fill="#FDE68A"/>
     <path d="M 98,128 L 70,168 L 70,184 L 98,168 Z" fill="#E2482B"/>
