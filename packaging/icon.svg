@@ -1,16 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
   <defs>
-    <radialGradient id="mars" cx="38%" cy="34%" r="70%">
-      <stop offset="0" stop-color="#F0A15E"/>
-      <stop offset="0.55" stop-color="#C8572B"/>
-      <stop offset="1" stop-color="#7A2A14"/>
+    <radialGradient id="mars" cx="36%" cy="32%" r="78%">
+      <stop offset="0" stop-color="#F6B072"/>
+      <stop offset="0.45" stop-color="#DB6A32"/>
+      <stop offset="0.8" stop-color="#A63F1C"/>
+      <stop offset="1" stop-color="#6E2410"/>
     </radialGradient>
   </defs>
-  <rect width="256" height="256" rx="48" fill="#15171C"/>
-  <circle cx="128" cy="128" r="92" fill="url(#mars)"/>
-  <ellipse cx="128" cy="54" rx="32" ry="9" fill="#F4E9E1" opacity="0.85"/>
-  <ellipse cx="166" cy="118" rx="14" ry="9" fill="#A9461F" opacity="0.7"/>
-  <ellipse cx="96" cy="150" rx="24" ry="10" fill="#9C3E1B" opacity="0.55"/>
-  <ellipse cx="150" cy="176" rx="18" ry="7" fill="#9C3E1B" opacity="0.5"/>
-  <ellipse cx="86" cy="104" rx="6" ry="4" fill="#A9461F" opacity="0.6"/>
+  <circle cx="128" cy="128" r="122" fill="url(#mars)"/>
+  <path d="M 64,24 A 122,122 0 0 1 192,24 Q 128,46 64,24 Z" fill="#FBF3EC"/>
+  <path d="M 52,118 Q 100,100 150,112 T 214,132" fill="none" stroke="#7A2A14" stroke-width="9" stroke-linecap="round" opacity="0.85"/>
+  <path d="M 70,150 Q 104,138 134,156 Q 112,176 78,170 Z" fill="#8E3518" opacity="0.7"/>
+  <path d="M 150,170 Q 186,160 206,178 Q 186,196 158,188 Z" fill="#8E3518" opacity="0.6"/>
+  <circle cx="92" cy="80" r="11" fill="#B9502A" opacity="0.8"/>
+  <circle cx="92" cy="80" r="5" fill="#E58A52"/>
+  <circle cx="170" cy="76" r="7" fill="#B9502A" opacity="0.7"/>
 </svg>
