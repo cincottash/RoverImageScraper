@@ -26,6 +26,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_exe import EXCLUDES, NAME, SRC  # noqa: E402  (shared with the Windows build)
+from make_icon import write_png  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ICON_NAME = "rover-image-scraper"
@@ -45,23 +46,6 @@ APP_RUN = f"""#!/bin/sh
 HERE="$(dirname "$(readlink -f "$0")")"
 exec "$HERE/usr/lib/{NAME}/{NAME}" "$@"
 """
-
-
-def render_icon_png(svg: str, png: str, size: int = 256) -> None:
-    """AppImage launchers want a PNG icon; draw one from the SVG with Qt (already installed for the app)."""
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QGuiApplication, QImage, QPainter
-    from PySide6.QtSvg import QSvgRenderer
-    if QGuiApplication.instance() is None:           # Qt needs an application object to draw
-        render_icon_png.app = QGuiApplication([])
-    image = QImage(size, size, QImage.Format.Format_ARGB32)
-    image.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(image)
-    QSvgRenderer(svg).render(painter)
-    painter.end()
-    if not image.save(png):
-        raise RuntimeError(f"could not write {png}")
 
 
 def write_file(path: str, text: str, executable: bool = False) -> None:
@@ -93,7 +77,7 @@ def build(out: str, appimagetool: str) -> str:
         shutil.copytree(os.path.join(dist, NAME), program, symlinks=True)
         write_file(os.path.join(appdir, "AppRun"), APP_RUN, executable=True)
         write_file(os.path.join(appdir, f"{ICON_NAME}.desktop"), DESKTOP_ENTRY)
-        render_icon_png(icon_svg, os.path.join(appdir, f"{ICON_NAME}.png"))
+        write_png(os.path.join(appdir, f"{ICON_NAME}.png"), 256)
         apps = os.path.join(appdir, "usr", "share", "applications")
         icons = os.path.join(appdir, "usr", "share", "icons", "hicolor", "256x256", "apps")
         os.makedirs(apps)
