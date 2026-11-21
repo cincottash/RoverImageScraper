@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBo
                                QVBoxLayout, QWidget)
 
 from api import SUPPORTED_ROVERS, ApiError, Cancelled, MarsVistaClient, load_api_key, save_api_key
-from pds import PdsClient, RoverSources, is_pds_rover
+from pds import PdsClient, RequestCounter, RoverSources, is_pds_rover, latest_sol
 from download import NASA_STATUS
 from plan import last_sol_on_disk
 from ratelimit import RequestTracker
@@ -159,7 +159,9 @@ def _check_icon() -> str:
             os.remove(old)
         except OSError:
             pass
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "check.svg").replace("\\", "/")
+    # In the packaged app, data files live in the bundle's folder (sys._MEIPASS), not next to the code.
+    here = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(here, "check.svg").replace("\\", "/")
 
 
 def apply_theme(app: QApplication, t: dict) -> None:
@@ -392,6 +394,7 @@ class MainWindow(QMainWindow):
         self.pos: dict = {}                      # where the current download is: rover, rover_index, sol, sol_min
         # A paused download, kept in memory only: it lasts until Stop, a new Start, or closing the app.
         self.checkpoint: dict | None = None
+        self.pds_requests = RequestCounter()      # NASA archive requests this session (no quota)
         remove_old_pause_file()
         self._loading = False
         # Camera selection to bring back when an unticked rover is ticked again (and what's saved for it).
@@ -638,7 +641,7 @@ class MainWindow(QMainWindow):
         grid.setVerticalSpacing(5)
         # Two groups, so what's in the folder isn't confused with what Mars Vista has.
         sections = [("ON DISK", ["Sols", "Photos", "Size"]),
-                    ("ON MARS VISTA", ["Latest sol", "To download", "Gaps in your sols"])]
+                    ("AVAILABLE ONLINE", ["Latest sol", "To download", "Gaps in your sols"])]
         self.lib_rows = [row for _, rows in sections for row in rows]
         self.lib_cells: dict[tuple[str, str], QLabel] = {}
         self.lib_heads: dict[str, QLabel] = {}
@@ -735,7 +738,7 @@ class MainWindow(QMainWindow):
         return frame
 
     def _build_usage_card(self) -> QFrame:
-        frame, lay = card("API usage (estimated)")
+        frame, lay = card("Mars Vista API usage (estimated)")
         grid = QGridLayout()
         grid.setHorizontalSpacing(12)
         self.hour_bar, self.day_bar = meter(), meter()
@@ -749,6 +752,17 @@ class MainWindow(QMainWindow):
             grid.addWidget(lbl, r, 2)
         grid.setColumnStretch(1, 1)
         lay.addLayout(grid)
+        # Spirit and Opportunity come from NASA's archive, which has no quota, so it gets a count, not a meter.
+        nasa = QHBoxLayout()
+        nasa.addWidget(label("NASA archive", "rowHead"))
+        nasa.addStretch()
+        self.pds_lbl = label("", "value")
+        nasa.addWidget(self.pds_lbl)
+        lay.addLayout(nasa)
+        tip = ("Mars Vista counts toward its limits (Curiosity, Perseverance). Spirit and Opportunity come from "
+               "NASA's PDS archive, which needs no key and has no request limit; its requests are counted here "
+               "only so you can see them. Photo files themselves come from NASA and aren't counted.")
+        frame.setToolTip(tip)
         self.banner = QFrame()
         self.banner.setObjectName("banner")
         bl = QVBoxLayout(self.banner)
@@ -897,7 +911,8 @@ class MainWindow(QMainWindow):
     def _client(self, key: str) -> RoverSources:
         """Curiosity and Perseverance from Mars Vista; Spirit and Opportunity from NASA's PDS archive."""
         return RoverSources(MarsVistaClient(key, tracker=self.tracker, cancel=self.cancel),
-                            PdsClient(cancel=self.cancel, log=lambda m: self._post("log", m)))
+                            PdsClient(cancel=self.cancel, log=lambda m: self._post("log", m),
+                                      counter=self.pds_requests))
 
     def _run_task(self, mode: str, fn) -> None:
         """Run fn() on a background thread. fn's return value arrives as a ("done", (mode, value)) event."""
@@ -932,7 +947,7 @@ class MainWindow(QMainWindow):
         def fetch():
             try:
                 client = MarsVistaClient(key, tracker=self.tracker)
-                info = {r.name: {"max_sol": r.max_sol, "cameras": list(r.cameras)} for r in client.rovers()}
+                info = {r.name: {"max_sol": latest_sol(r.name, r.max_sol), "cameras": list(r.cameras)} for r in client.rovers()}
                 self._post("rovers", info)
             except ApiError as e:
                 self._post("api_error", self._explain_api_error(e))
@@ -1243,7 +1258,7 @@ class MainWindow(QMainWindow):
         def work():
             client = self._client(key)
             if not self.rover_info:
-                self.rover_info = {r.name: {"max_sol": r.max_sol, "cameras": list(r.cameras)}
+                self.rover_info = {r.name: {"max_sol": latest_sol(r.name, r.max_sol), "cameras": list(r.cameras)}
                                    for r in client.rovers()}
             unavailable = Unavailable(UNAVAILABLE_PATH, ignore_existing=retry_refused)
             scraper = Scraper(client, dest, log=lambda m: self._post("log", m), cancel=self.cancel,
@@ -1287,7 +1302,7 @@ class MainWindow(QMainWindow):
         def work():
             client = self._client(key)
             if not self.rover_info:
-                self.rover_info = {r.name: {"max_sol": r.max_sol, "cameras": list(r.cameras)}
+                self.rover_info = {r.name: {"max_sol": latest_sol(r.name, r.max_sol), "cameras": list(r.cameras)}
                                    for r in client.rovers()}
             unavailable = Unavailable(UNAVAILABLE_PATH)
             scraper = Scraper(client, dest, log=lambda m: self._post("log", m), cancel=self.cancel,
@@ -1403,7 +1418,7 @@ class MainWindow(QMainWindow):
         def work():
             client = self._client(key)
             if not self.rover_info:
-                self.rover_info = {r.name: {"max_sol": r.max_sol, "cameras": list(r.cameras)}
+                self.rover_info = {r.name: {"max_sol": latest_sol(r.name, r.max_sol), "cameras": list(r.cameras)}
                                    for r in client.rovers()}
             rows = []
             for rover in rovers:
@@ -1637,6 +1652,7 @@ class MainWindow(QMainWindow):
         self.day_bar.setValue(int(1000 * min(1, usage.day / usage.daily_limit)))
         self.hour_lbl.setText(f"{usage.hour:,} / {usage.hourly_limit:,}")
         self.day_lbl.setText(f"{usage.day:,} / {usage.daily_limit:,}")
+        self.pds_lbl.setText(f"{self.pds_requests.count:,} requests this session · no limit")
 
         waiting = usage.waiting and self.mode != "idle"
         nasa_busy = NASA_STATUS.busy_recently() and self.mode == "download"

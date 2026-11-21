@@ -29,6 +29,9 @@ numbered 0, 1, 2… within each camera folder. Files have no extension, but they
 
 ## Setup
 
+The desktop app can be built as a standalone Windows program that needs no Python: see
+[Standalone app](#standalone-app-windows). The steps below run it from the source code.
+
 1. Install **Python 3.10 or newer**.
 2. Clone the repo and create a virtual environment:
    ```bat
@@ -84,8 +87,10 @@ What the window offers:
   *Full check* also finds gaps in existing sols; it uses about one API request per sol on disk, so it asks first.
 - **Progress:** photos and data downloaded, current speed (averaged over a few seconds), average speed, photo
   rate, elapsed time and an estimate of the time left.
-- **API usage:** how many Mars Vista requests have been used this hour and today, counted by the app. When the
-  limit is reached, an amber banner shows a countdown, and the download carries on by itself afterwards.
+- **Mars Vista API usage:** how many Mars Vista requests have been used this hour and today, counted by the app.
+  When the limit is reached, an amber banner shows a countdown, and the download carries on by itself afterwards.
+  Below it, *NASA archive* shows how many requests went to NASA's PDS archive this session (Spirit and
+  Opportunity). That archive needs no key and has no request limit, so it's a count, not a meter.
 - **Activity:** the same log the command line prints.
 - **Menus:**
   - *File*: choose or open the photo folder, quit.
@@ -166,6 +171,34 @@ To run from any other folder, use full paths to both `python.exe` (inside `.venv
 - The order of photos within a camera folder follows Mars Vista's listing and may differ from folders made with
   the old API.
 
+## Standalone app (Windows)
+
+The desktop app can be packaged with [PyInstaller](https://pyinstaller.org) into a program that carries its own
+private copy of Python and the libraries. It runs on a Windows PC without Python, needs nothing downloaded to
+start, and installs nothing: delete its folder and it's gone. Settings are kept in the same place as above.
+
+Two forms are built:
+
+- **Folder version** (recommended): a `RoverImageScraper` folder with `RoverImageScraper.exe` inside, about
+  90 MB, shared as a zip of about 35 MB. Unzip it anywhere and double-click the `.exe`.
+- **Single file**: one `RoverImageScraper.exe` of about 35 MB. Each time it starts it unpacks itself into a
+  temporary folder (removed when it closes), so it starts a little more slowly.
+
+Windows may show *"Windows protected your PC"* the first time, because the program isn't code-signed. Click
+*More info*, then *Run anyway*.
+
+To build it, use a separate virtual environment with the requirements and PyInstaller, then run the build script.
+Each build goes into a new dated subfolder of `--out`:
+
+```bat
+py -3.10 -m venv build-venv
+build-venv\Scripts\pip install -r requirements.txt pyinstaller
+build-venv\Scripts\python packaging\build_exe.py --out C:\path\to\builds
+```
+
+Add `--only folder` or `--only single` to build just one form. The standalone app is the desktop app only; the
+command line runs from the source code as described above.
+
 ## Code layout
 
 All code is in `rover_scraper/`:
@@ -182,3 +215,6 @@ All code is in `rover_scraper/`:
 - `download.py`: downloads that never overwrite existing files.
 - `state.py`: remembers photos NASA refuses to serve.
 - `settings.py`: the desktop app's saved settings.
+- `check.svg`: the tick drawn in checkboxes.
+
+`packaging/build_exe.py` builds the standalone app.

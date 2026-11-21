@@ -45,6 +45,11 @@ def is_pds_rover(rover: str) -> bool:
     return rover.lower() in ROVERS
 
 
+def latest_sol(name: str, mars_vista_max_sol: int) -> int:
+    """The latest sol with photos: from NASA's archive for Spirit and Opportunity (Mars Vista's is too low)."""
+    return LAST_SOL.get(name.lower(), mars_vista_max_sol)
+
+
 def photo_id(name: str) -> int:
     """A stable number for a PDS file: ordered by rover and capture time, unique per file. Far above Mars Vista's
     IDs, so the two never clash in the list of photos NASA refused."""
@@ -52,17 +57,30 @@ def photo_id(name: str) -> int:
     return (int(name[0]) * 10 ** 10 + clock) * 10 ** 6 + zlib.crc32(name.lower().encode()) % 10 ** 6
 
 
+class RequestCounter:
+    """Counts requests to NASA's archive (it has no quota; this is only shown so the traffic is visible)."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.count = 0
+
+    def add(self) -> None:
+        with self._lock:
+            self.count += 1
+
+
 class PdsClient:
     """Same methods as MarsVistaClient that the scraper and scans use: manifest, camera_counts, photos_for_sol."""
 
     def __init__(self, session: requests.Session | None = None, timeout: float = 60, max_retries: int = 3,
                  sleep: Callable[[float], None] = time.sleep, cancel: threading.Event | None = None,
-                 log: Callable[[str], None] | None = None):
+                 log: Callable[[str], None] | None = None, counter: RequestCounter | None = None):
         self.session = session or requests.Session()
         self.session.headers["User-Agent"] = USER_AGENT     # PDS refuses requests that don't say who they are
         self.timeout, self.max_retries, self.sleep = timeout, max_retries, sleep
         self.cancel = cancel or threading.Event()
         self.log = log or (lambda message: None)
+        self.counter = counter or RequestCounter()
         self._sol_cache: tuple[tuple[str, int], list[Photo]] | None = None
 
     # ---- folder listings ---------------------------------------------------------------------------------
@@ -78,6 +96,7 @@ class PdsClient:
             if self.cancel.is_set():
                 raise Cancelled()
             try:
+                self.counter.add()
                 r = self.session.get(url, timeout=(15, self.timeout))
                 if r.status_code == 404:
                     return None
@@ -136,6 +155,10 @@ class RoverSources:
 
     def __init__(self, marsvista, pds: PdsClient):
         self.marsvista, self.pds = marsvista, pds
+
+    def rovers(self):
+        """Rover names, cameras and latest sols (from Mars Vista; see latest_sol for Spirit/Opportunity)."""
+        return self.marsvista.rovers()
 
     def _for(self, rover: str):
         return self.pds if is_pds_rover(rover) else self.marsvista

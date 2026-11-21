@@ -22,3 +22,8 @@ HANDOFF.md
 
 # Local-only check scripts
 tools/
+
+# PyInstaller output (when built inside the project)
+build/
+dist/
+*.spec

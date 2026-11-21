@@ -8,7 +8,7 @@ import sys
 import time
 
 from api import SUPPORTED_ROVERS, ApiError, MarsVistaClient, load_api_key
-from pds import PdsClient, RoverSources, is_pds_rover
+from pds import PdsClient, RequestCounter, RoverSources, is_pds_rover
 from ratelimit import RequestTracker
 from scraper import Report, Scraper
 from state import Unavailable, default_state_dir
@@ -76,7 +76,8 @@ def main(argv: list[str] | None = None) -> int:
                               ignore_existing=args.retry_unavailable)
     wanted = {c.strip().upper() for c in args.cameras.split(",") if c.strip()} if args.cameras else None
     cameras = {r.name: wanted for r in rovers} if wanted else None
-    sources = RoverSources(client, PdsClient(log=lambda m: print(m, flush=True)))
+    pds_requests = RequestCounter()
+    sources = RoverSources(client, PdsClient(log=lambda m: print(m, flush=True), counter=pds_requests))
     scraper = Scraper(sources, args.dest, dry_run=args.dry_run, unavailable=unavailable, workers=args.workers,
                       cameras=cameras)
     report = Report()
@@ -95,6 +96,8 @@ def main(argv: list[str] | None = None) -> int:
     usage = tracker.usage()
     print(f"\nMars Vista requests (estimated): {usage.hour:,} of {usage.hourly_limit:,} this hour, "
           f"{usage.day:,} of {usage.daily_limit:,} today")
+    if pds_requests.count:
+        print(f"NASA PDS archive requests (Spirit/Opportunity, no limit): {pds_requests.count:,}")
 
     print(f"\nSols with photos checked: {report.sols_checked} "
           f"({report.sols_skipped_quick} complete by manifest match, "
