@@ -2363,7 +2363,7 @@ def main() -> int:
         app.setWindowIcon(QIcon(icon))
 
     if chosen_state_dir() is None:                  # first run: ask where the app's files go
-        apply_theme(app, DARK if system_is_dark(app) else LIGHT)
+        apply_theme(app, DARK)                       # the default theme, until settings exist
         setup = SetupDialog()
         if setup.exec() != QDialog.DialogCode.Accepted:
             return 0

@@ -112,9 +112,9 @@ Then:
   to their defaults); quit.
 - **Download:** Start, Pause and Stop, Quick scan, Full check and Preview (the same as the buttons), and *Retry
   photos NASA refused* on the next run.
-- **View:** the theme (match the operating system, light, dark, or one of ten space-themed color schemes), units
-  for data and speed and how long *Speed* is averaged over, show or hide the activity log, the detailed activity
-  log, and *Reset view options*.
+- **View:** the theme (dark by default; also match the operating system, light, or one of ten space-themed color
+  schemes), units for data and speed and how long *Speed* is averaged over, show or hide the activity log, the
+  detailed activity log, and *Reset view options*.
 - **Help:** the Mars Vista website, open the app data folder, report a problem (opens the project's GitHub
   issues), and *About*.
 

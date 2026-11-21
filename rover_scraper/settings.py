@@ -30,7 +30,7 @@ class Settings:
     data_unit: str = "auto"              # auto | KB | MB | GB | TB
     speed_unit: str = "auto"             # auto | KB/s | MB/s | Mbit/s
     speed_window: int = 10               # seconds the speed is averaged over
-    theme: str = "system"                # system (match the OS) or a theme key from gui.THEMES
+    theme: str = "dark"                  # "system" (match the OS) or a theme key from gui.THEMES
     show_log: bool = True
     verbose_log: bool = False            # View > Detailed activity log
 
