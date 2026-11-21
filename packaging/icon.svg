@@ -19,7 +19,7 @@
   <circle cx="214" cy="96" r="2.5" fill="#FFFFFF" opacity="0.85"/>
   <circle cx="120" cy="226" r="2" fill="#FFFFFF" opacity="0.6"/>
   <circle cx="64" cy="200" r="3" fill="#FFFFFF" opacity="0.9"/>
-  <g transform="rotate(-45 128 128)">
+  <g transform="translate(128 128) scale(1.2) rotate(-45) translate(-128 -128)">
     <path d="M 110,176 Q 128,250 146,176 Z" fill="#F97316"/>
     <path d="M 117,176 Q 128,226 139,176 Z" fill="#FDE68A"/>
     <path d="M 98,128 L 70,168 L 70,184 L 98,168 Z" fill="#E2482B"/>
