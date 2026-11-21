@@ -166,34 +166,177 @@ def _variant(base: dict, bg, card, border, text, muted, accent, accent_hover, in
                            log_bg=input), **rest}
 
 
-# (menu name, setting value, colors). Light and Dark first, then the extra themes.
+# Themes: (group, menu name, setting value, colors). View > Theme has "Match operating system", then a submenu per
+# group. Each is built on Light or Dark (status colors) with its own surfaces and accent:
+#   _variant(base, bg, card, border, text, muted, accent, accent_hover, input, track, accent_text=...)
+# Most of the Dark and Light themes use the published colors of popular open-source editor color schemes (Nord, Dracula,
+# Solarized, Gruvbox, Catppuccin and others; see the README); the "Space" themes are this app's own.
+L, D = LIGHT, DARK
 THEMES = [
-    ("Light", "light", LIGHT),
-    ("Dark", "dark", DARK),
-    ("Mars Day", "mars_day", _variant(LIGHT, "#F6EEE6", "#FFFBF7", "#E8D6C6", "#3B2418", "#8A6A58",
-                                      "#C2410C", "#9A3412", "#FFFFFF", "#F0E2D6")),
-    ("Red Planet", "red_planet", _variant(DARK, "#1C1210", "#271916", "#3D2620", "#F3E3DC", "#B89A8E",
-                                          "#E2582B", "#F07A4F", "#1F1412", "#35221D")),
-    ("Deep Space", "deep_space", _variant(DARK, "#0B1020", "#121A2E", "#22304D", "#E1E7F5", "#8D9AB8",
-                                          "#4F7CFF", "#7A9CFF", "#0E1527", "#1C2742")),
-    ("Nebula", "nebula", _variant(DARK, "#151022", "#1E1730", "#342850", "#ECE6F8", "#A699C2",
-                                  "#A855F7", "#C084FC", "#18122A", "#2A2140")),
-    ("Aurora", "aurora", _variant(DARK, "#0C1716", "#13211F", "#22383A", "#DDF2EE", "#8EB3AD",
-                                  "#14B8A6", "#2DD4BF", "#0F1C1B", "#1C302D", accent_text="#04201C")),
-    ("Starlight", "starlight", _variant(DARK, "#050608", "#0E1014", "#1E222A", "#F1F3F6", "#8C94A3",
-                                        "#38BDF8", "#7DD3FC", "#08090C", "#181B22", accent_text="#031722")),
-    ("Lunar", "lunar", _variant(LIGHT, "#ECEDEF", "#F8F8F9", "#D5D7DB", "#202226", "#686C74",
-                                "#4B5563", "#374151", "#FFFFFF", "#E1E3E6")),
-    ("Ice Moon", "ice_moon", _variant(LIGHT, "#EEF5FA", "#FAFDFF", "#D3E3EE", "#14283A", "#5C7489",
-                                      "#0284C7", "#0369A1", "#FFFFFF", "#DDEBF5")),
-    ("Solar Flare", "solar_flare", _variant(DARK, "#17130A", "#211B0F", "#3A301A", "#F6EEDB", "#B8A57E",
-                                            "#F59E0B", "#FBBF24", "#1B160C", "#2F2715", accent_text="#2A1A00")),
-    ("High Contrast", "high_contrast", _variant(DARK, "#000000", "#000000", "#FFFFFF", "#FFFFFF", "#D0D0D0",
-                                                "#FFD400", "#FFE45C", "#000000", "#333333",
-                                                accent_text="#000000", ok="#7CFF7C", warn="#FFE45C",
-                                                err="#FF8080")),
+    ("Light themes", "Light", "light", LIGHT),
+    ("Dark themes", "Dark", "dark", DARK),
+    ("Dark themes", "High Contrast", "high_contrast", _variant(D, "#000000", "#000000", "#FFFFFF", "#FFFFFF", "#D0D0D0",
+                                                          "#FFD400", "#FFE45C", "#000000", "#333333",
+                                                          accent_text="#000000", ok="#7CFF7C", warn="#FFE45C",
+                                                          err="#FF8080")),
+
+    # ---- Space (this app's own) ----
+    ("Space", "Mars Day", "mars_day", _variant(L, "#FFE7DB", "#FFF4EC", "#F4CFBB", "#3B2418", "#8A6A58",
+                                               "#C2410C", "#9A3412", "#FFF8F4", "#FDDBCB")),
+    ("Space", "Red Planet", "red_planet", _variant(D, "#1F0E0D", "#2A1614", "#40221E", "#F3E3DC", "#B89A8E",
+                                                   "#E2582B", "#F07A4F", "#221010", "#381F1B")),
+    ("Space", "Martian Dusk", "martian_dusk", _variant(D, "#211517", "#2B1E22", "#403138", "#ECE4DC", "#A8A1A6",
+                                                       "#6FA8DC", "#9CC4EA", "#1E1212", "#36282E",
+                                                       accent_text="#0B1622")),
+    ("Space", "Deep Space", "deep_space", _variant(D, "#020D20", "#09182E", "#192E4D", "#E1E7F5", "#8D9AB8",
+                                                   "#4F7CFF", "#7A9CFF", "#051227", "#132542")),
+    ("Space", "Nebula", "nebula", _variant(D, "#141124", "#1D1732", "#332853", "#ECE6F8", "#A699C2",
+                                           "#A855F7", "#C084FC", "#17132C", "#292143")),
+    ("Space", "Aurora", "aurora", _variant(D, "#0A1816", "#12221F", "#213939", "#DDF2EE", "#8EB3AD",
+                                           "#14B8A6", "#2DD4BF", "#0E1D1B", "#1B312D", accent_text="#04201C")),
+    ("Space", "Starlight", "starlight", _variant(D, "#100509", "#160F15", "#25212B", "#F1F3F6", "#8C94A3",
+                                                 "#38BDF8", "#7DD3FC", "#12080D", "#1F1A23", accent_text="#031722")),
+    ("Space", "Solar Flare", "solar_flare", _variant(D, "#121409", "#1D1C0F", "#35311A", "#F6EEDB", "#B8A57E",
+                                                     "#F59E0B", "#FBBF24", "#16170C", "#2A2815",
+                                                     accent_text="#2A1A00")),
+    ("Space", "Eclipse", "eclipse", _variant(D, "#0E0700", "#140F03", "#2F271C", "#F2EEE9", "#A39C94",
+                                             "#FF8A3D", "#FFA866", "#120A00", "#231D15", accent_text="#1F0E00")),
+    ("Space", "Supernova", "supernova", _variant(D, "#130618", "#1D0D25", "#3B1D4A", "#F7E8FF", "#B9A0C9",
+                                                 "#EC4899", "#F472B6", "#0F0411", "#2B1536")),
+    ("Space", "Neptune", "neptune", _variant(D, "#06142B", "#0B1E3D", "#1A3561", "#DCE8FF", "#8EA6CF",
+                                             "#3B82F6", "#60A5FA", "#051026", "#142B52")),
+    ("Space", "Jupiter Storm", "jupiter_storm", _variant(D, "#1B130E", "#261B14", "#433024", "#F4E6D8",
+                                                         "#B8A08A", "#D97B45", "#E89A6C", "#160F0B", "#34251B",
+                                                         accent_text="#1F0F05")),
+    ("Space", "Titan Haze", "titan_haze", _variant(D, "#1C1606", "#27200F", "#44391C", "#F3E9CC", "#B5A77E",
+                                                   "#D4A017", "#E8B93A", "#171204", "#362C14",
+                                                   accent_text="#1F1700")),
+    ("Space", "Comet", "comet", _variant(D, "#051519", "#0C2128", "#1A3B46", "#E0F4F8", "#8AAFB9",
+                                         "#22D3EE", "#67E8F9", "#021115", "#13313B", accent_text="#042027")),
+    ("Space", "Milky Way", "milky_way", _variant(D, "#0D0A19", "#161424", "#2B2843", "#EEEDFB", "#A3A1C4",
+                                                 "#8B8CF8", "#A9AAFB", "#070512", "#221F36",
+                                                 accent_text="#0E0D24")),
+    ("Space", "Earthrise", "earthrise", _variant(D, "#0A0F0C", "#12191D", "#24303B", "#E3EBF3", "#8F9DAE",
+                                                 "#278A5F", "#2F9E6E", "#070B05", "#1C252C")),
+    ("Space", "Lunar", "lunar", _variant(L, "#F4EBF9", "#FFF6FF", "#DDD5E5", "#202226", "#686C74",
+                                         "#4B5563", "#374151", "#FFFDFF", "#E9E1F0")),
+    ("Space", "Ice Moon", "ice_moon", _variant(L, "#D4F3FF", "#E0FBFF", "#B8E1F3", "#14283A", "#5C7489",
+                                               "#0284C7", "#0369A1", "#E5FDFF", "#C2E9FA")),
+    ("Space", "Europa", "europa", _variant(L, "#DEFFF6", "#EBFFFE", "#C0EDE1", "#12302C", "#557571",
+                                           "#0F8C7E", "#0B6E63", "#F0FFFF", "#CDF8EB")),
+    ("Space", "Venus", "venus", _variant(L, "#FFFEDA", "#FFFFE9", "#F1E8B5", "#3A3016", "#7E7150",
+                                         "#B7791F", "#975A16", "#FFFFF6", "#FAF3C3")),
+    ("Space", "Saturn Rings", "saturn_rings", _variant(L, "#E9F1DD", "#F1FCED", "#D8D9BA", "#352B1D", "#7C6E58",
+                                                       "#A0703A", "#80592C", "#F1FFF6", "#E1E5CA")),
+    ("Space", "Pluto", "pluto", _variant(L, "#F7E0E6", "#FFE9F0", "#E4C8CD", "#2F2524", "#776765",
+                                         "#B4566A", "#944457", "#FFEEF6", "#EED3D8")),
+    ("Space", "Cosmic Latte", "cosmic_latte", _variant(L, "#FFFBE3", "#FFFFF2", "#F9E5C4", "#33291A", "#7A6C55",
+                                                       "#8B5E34", "#6E4A28", "#FFFFFB", "#FFEFD2")),
+
+    # ---- more dark themes (open-source editor color schemes) ----
+    ("Dark themes", "Nord", "nord", _variant(D, "#2E343F", "#3B4251", "#4C5669", "#ECEFF4", "#AEB7C8",
+                                              "#88C0D0", "#8FBCBB", "#292E38", "#434C5D", accent_text="#2E3440")),
+    ("Dark themes", "Dracula", "dracula", _variant(D, "#251F28", "#2C2732", "#484455", "#F8F8F2", "#A4ADD3",
+                                                    "#BD93F9", "#FF79C6", "#1F1920", "#484455",
+                                                    accent_text="#282A36")),
+    ("Dark themes", "Solarized Dark", "solarized_dark", _variant(D, "#002B36", "#073642", "#0E4B59", "#EEE8D5",
+                                                                  "#93A1A1", "#268BD2", "#2AA198", "#00222B",
+                                                                  "#0B4250")),
+    ("Dark themes", "Gruvbox Dark", "gruvbox_dark", _variant(D, "#162121", "#222928", "#4A4B45", "#EBDBB2",
+                                                              "#A89984", "#FABD2F", "#FE8019", "#131D1D",
+                                                              "#373936", accent_text="#282828")),
+    ("Dark themes", "One Dark", "one_dark", _variant(D, "#1F252A", "#262C33", "#3C4450", "#ABB2BF", "#8B919C",
+                                                      "#61AFEF", "#8AC4F5", "#1C2226", "#2A3139",
+                                                      accent_text="#1E2227")),
+    ("Dark themes", "Tokyo Night", "tokyo_night", _variant(D, "#0C1822", "#0F1D2B", "#1C3148", "#C0CAF5",
+                                                            "#9AA5CE", "#7AA2F7", "#9ABDF5", "#07151E",
+                                                            "#1C3148", accent_text="#16161E")),
+    ("Dark themes", "Catppuccin Mocha", "catppuccin_mocha", _variant(D, "#141827", "#1A1E30", "#2E3246", "#CDD6F4",
+                                                                      "#A6ADC8", "#CBA6F7", "#B4BEFE", "#0E111D",
+                                                                      "#2E3246", accent_text="#1E1E2E")),
+    ("Dark themes", "Catppuccin Macchiato", "catppuccin_macchiato",
+     _variant(D, "#172135", "#1D283F", "#2F3B54", "#CAD3F5", "#A5ADCB", "#C6A0F6", "#B7BDF8", "#111A2A", "#2F3B54",
+              accent_text="#24273A")),
+    ("Dark themes", "Catppuccin Frappé", "catppuccin_frappe",
+     _variant(D, "#292F41", "#30374B", "#41485F", "#C6D0F5", "#A5ADCE", "#CA9EE6", "#BABBF1", "#232939", "#41485F",
+              accent_text="#303446")),
+    ("Dark themes", "Rosé Pine", "rose_pine", _variant(D, "#201624", "#261C2E", "#2D223A", "#E0DEF4", "#908CAA",
+                                                        "#C4A7E7", "#EBBCBA", "#1B131F", "#2D223A",
+                                                        accent_text="#191724")),
+    ("Dark themes", "Rosé Pine Moon", "rose_pine_moon", _variant(D, "#24233B", "#2B2944", "#3A3757", "#E0DEF4",
+                                                                  "#908CAA", "#C4A7E7", "#EA9A97", "#201F35",
+                                                                  "#3A3757", accent_text="#232136")),
+    ("Dark themes", "Everforest Dark", "everforest_dark", _variant(D, "#283135", "#2E383D", "#48555B", "#D3C6AA",
+                                                                    "#9DA9A0", "#A7C080", "#83C092", "#242D2F",
+                                                                    "#3E4B50", accent_text="#2D353B")),
+    ("Dark themes", "Kanagawa", "kanagawa", _variant(D, "#181019", "#211A23", "#383141", "#DCD7BA", "#A6A69C",
+                                                      "#7E9CD8", "#7FB4CA", "#150D16", "#2C2532",
+                                                      accent_text="#16161D")),
+    ("Dark themes", "Ayu Dark", "ayu_dark", _variant(D, "#080C15", "#0F141D", "#232934", "#BFBDB6", "#8A8F98",
+                                                      "#E6B450", "#FFB454", "#050710", "#1C222C",
+                                                      accent_text="#0B0E14")),
+    ("Dark themes", "Ayu Mirage", "ayu_mirage", _variant(D, "#1A2533", "#1F2A39", "#2F3C4F", "#CCCAC2", "#9DA2AC",
+                                                          "#FFCC66", "#FFD580", "#15202C", "#283446",
+                                                          accent_text="#1F2430")),
+    ("Dark themes", "Palenight", "palenight", _variant(D, "#282535", "#2E2C3E", "#3F3E58", "#C8CCE6", "#959DCB",
+                                                        "#C792EA", "#82AAFF", "#232030", "#39314A",
+                                                        accent_text="#1E2130")),
+    ("Dark themes", "Night Owl", "night_owl", _variant(D, "#011627", "#0B2942", "#1D3B53", "#D6DEEB", "#8FAABF",
+                                                        "#82AAFF", "#C792EA", "#01111D", "#13344F",
+                                                        accent_text="#011627")),
+    ("Dark themes", "Cobalt2", "cobalt2", _variant(D, "#14232C", "#173548", "#285A79", "#FFFFFF", "#A7C0D2",
+                                                    "#FFC600", "#FFD84D", "#112737", "#214E6C",
+                                                    accent_text="#193549")),
+    ("Dark themes", "Synthwave '84", "synthwave84", _variant(D, "#22172E", "#2A2039", "#4A3169", "#F4EEFF",
+                                                              "#B6A8D2", "#FF7EDB", "#F97E72", "#1E1329",
+                                                              "#382653", accent_text="#241B2F")),
+    ("Dark themes", "Tomorrow Night", "tomorrow_night", _variant(D, "#211D1E", "#2C282B", "#3C393E", "#C5C8C6",
+                                                                  "#969896", "#81A2BE", "#B294BB", "#1A1516",
+                                                                  "#3C393E", accent_text="#1D1F21")),
+    ("Dark themes", "Monokai", "monokai", _variant(D, "#1F1F1B", "#282821", "#4A483C", "#F8F8F2", "#A59F85",
+                                                    "#A6E22E", "#E6DB74", "#1B1B16", "#3F3D31",
+                                                    accent_text="#272822")),
+    ("Dark themes", "Zenburn", "zenburn", _variant(D, "#383838", "#3F3F3F", "#5B5B5B", "#DCDCCC", "#A8A897",
+                                                    "#8CD0D3", "#93E0E3", "#313131", "#4F4F4F",
+                                                    accent_text="#2B2B2B")),
+
+    # ---- more light themes ----
+    ("Light themes", "Nord Light", "nord_light", _variant(L, "#DCEAF9", "#E3F0FD", "#CFDFF2", "#2E3440",
+                                                           "#4C566A", "#5E81AC", "#4C6A93", "#F6FFFF", "#CFDFF2")),
+    ("Light themes", "Solarized Light", "solarized_light", _variant(L, "#EEE6D6", "#FDF4E4", "#DDD4C2", "#3B4D54",
+                                                                     "#657B83", "#268BD2", "#1F6FA8", "#FFF9F0",
+                                                                     "#E4DBC9")),
+    ("Light themes", "Gruvbox Light", "gruvbox_light", _variant(L, "#F3E5BD", "#FCF1C8", "#D6C4A2", "#3C3836",
+                                                                 "#7C6F64", "#AF3A03", "#8F3002", "#FFFAE4",
+                                                                 "#ECDBB3")),
+    ("Light themes", "One Light", "one_light", _variant(L, "#E9E0DF", "#F9F0ED", "#D3CBCA", "#383A42", "#696C77",
+                                                         "#4078F2", "#2F5FD0", "#FEF5F2", "#DFD7D6")),
+    ("Light themes", "Catppuccin Latte", "catppuccin_latte", _variant(L, "#E5E7EE", "#EEEFF4", "#CBCED9",
+                                                                       "#4C4F69", "#6C6F85", "#8839EF", "#7028D4",
+                                                                       "#FEFDFE", "#DBDEE7")),
+    ("Light themes", "Rosé Pine Dawn", "rose_pine_dawn", _variant(L, "#FFF7EF", "#FFFDF5", "#F1DDDB", "#575279",
+                                                                   "#797593", "#907AA9", "#286983", "#FFFFFD",
+                                                                   "#FFECE3")),
+    ("Light themes", "Everforest Light", "everforest_light", _variant(L, "#EBEBD0", "#F9F6DF", "#D9D8BA",
+                                                                       "#3A454B", "#5F6B63", "#6F8A0B", "#5A7008",
+                                                                       "#FBFBEB", "#E2E2C8")),
+    ("Light themes", "Tokyo Night Day", "tokyo_night_day", _variant(L, "#D5D5DA", "#E1E1E6", "#C4C7D9", "#1F3B80",
+                                                                     "#4F5E96", "#2E7DE9", "#1D63C7", "#F2F2F5",
+                                                                     "#CBCCD5")),
+    ("Light themes", "Kanagawa Lotus", "kanagawa_lotus", _variant(L, "#E4DDAF", "#F1ECBB", "#D4CEA2", "#3C3C4E",
+                                                                   "#625F52", "#4D699B", "#3B5481", "#F9F6D5",
+                                                                   "#E6DB9F")),
+    ("Light themes", "Ayu Light", "ayu_light", _variant(L, "#DFEFEE", "#EBFAF8", "#CBDCDD", "#4C5157", "#787B80",
+                                                         "#C86A14", "#A85710", "#EEFDFB", "#D6E6E5")),
+    ("Light themes", "Tomorrow", "tomorrow", _variant(L, "#E5E8E0", "#F5F8F0", "#CCCFC8", "#4D4D4C", "#7A7A78",
+                                                       "#4271AE", "#345A8B", "#F5F8F0", "#DCDFD8")),
+    ("Light themes", "Paper", "paper", _variant(L, "#F1FDF0", "#FBFFFD", "#DCE6D4", "#2B2A27", "#6E6A62",
+                                                 "#3D5A80", "#2C4460", "#FBFFFF", "#E6F0DF")),
+    ("Light themes", "Sepia", "sepia", _variant(L, "#F2E0C7", "#FBECD7", "#E0C9A7", "#4A3B28", "#7A6A52",
+                                                 "#8A5A2B", "#6E4721", "#FFF5E3", "#EAD5B6")),
 ]
-THEME_COLORS = {key: colors for _, key, colors in THEMES}
+THEME_COLORS = {key: colors for _, _, key, colors in THEMES}
+THEME_GROUPS = ("Space", "Dark themes", "Light themes")
 
 
 def system_is_dark(app: QApplication) -> bool:
@@ -213,7 +356,12 @@ def app_icon_path() -> str | None:
     return None
 
 
-def _check_icon() -> str:
+def _is_light(color: str) -> bool:
+    c = QColor(color)
+    return 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue() > 150
+
+
+def _check_icon(dark: bool = False) -> str:
     """Path to the white tick SVG for checkbox indicators (Qt style sheets need a file). It ships with the
     code, so nothing is written at run time."""
     old = os.path.join(tempfile.gettempdir(), "rover_scraper_check.svg")    # written by earlier versions
@@ -224,10 +372,12 @@ def _check_icon() -> str:
             pass
     # In the packaged app, data files live in the bundle's folder (sys._MEIPASS), not next to the code.
     here = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(here, "check.svg").replace("\\", "/")
+    return os.path.join(here, "check_dark.svg" if dark else "check.svg").replace("\\", "/")
 
 
-def apply_theme(app: QApplication, t: dict) -> None:
+def apply_theme(app: QApplication, t: dict, only=None) -> None:
+    """Style the whole app with theme t, or only one widget and its children (only=widget, for previews)."""
+    target = only if only is not None else app
     pal = QPalette()
     for role, key in ((QPalette.ColorRole.Window, "bg"), (QPalette.ColorRole.Base, "input"),
                       (QPalette.ColorRole.AlternateBase, "card"), (QPalette.ColorRole.Text, "text"),
@@ -241,8 +391,8 @@ def apply_theme(app: QApplication, t: dict) -> None:
     pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(t["muted"]))
     pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor(t["muted"]))
     pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(t["muted"]))
-    app.setPalette(pal)
-    app.setStyleSheet(f"""
+    target.setPalette(pal)
+    target.setStyleSheet(f"""
         QWidget {{ font-family: "Segoe UI"; font-size: 10pt; }}
         QMainWindow, QWidget#root {{ background: {t['bg']}; }}
         QMenuBar {{ background: {t['card']}; padding: 2px 8px; }}
@@ -302,7 +452,7 @@ def apply_theme(app: QApplication, t: dict) -> None:
                                background: {t['input']}; }}
         QCheckBox::indicator:hover {{ border-color: {t['accent']}; }}
         QCheckBox::indicator:checked {{ background: {t['accent']}; border-color: {t['accent']};
-                                       image: url({_check_icon()}); }}
+                                       image: url({_check_icon(_is_light(t['accent_text']))}); }}
         QCheckBox::indicator:disabled {{ background: {t['track']}; border-color: {t['border']}; }}
         QCheckBox::indicator:checked:disabled {{ background: {t['muted']}; border-color: {t['muted']}; }}
     """)
@@ -723,7 +873,7 @@ class MainWindow(QMainWindow):
         self._build_key_card()
         self._build_rovers_card()
         self._build_options_card()
-        self.left_col.addStretch()
+        self.left_col.addStretch(1)        # spare height goes below the cards, not into them
 
         self.right_col = right
         self.right_cards = [self._build_library_card(), self._build_progress_card(), self._build_usage_card()]
@@ -732,12 +882,13 @@ class MainWindow(QMainWindow):
             right.addWidget(c)
         self.activity_card = self._build_activity_card()
         right.addWidget(self.activity_card, 1)
-        # Shown only while the activity log is hidden, where the log was: bottom right, just above Start.
-        self.log_show_btn = link_button("Show activity ▴")
-        self.log_show_btn.setToolTip("Show the activity log again (also under View > Show activity log)")
-        self.log_show_btn.clicked.connect(lambda: self._set_log_visible(True))
-        self.log_show_btn.setVisible(False)
-        right.addWidget(self.log_show_btn, 0, Qt.AlignmentFlag.AlignRight)
+        # When the activity log is hidden, leftover height goes below the cards, so each card keeps its natural
+        # height and they stay together at the top.
+        right.addStretch(0)
+        self.foldable: dict[str, tuple[QFrame, QWidget, QToolButton]] = {}
+        left_cards = [self.left_col.itemAt(i).widget() for i in range(self.left_col.count())]
+        for frame in [c for c in left_cards if c is not None] + self.right_cards:
+            self._make_foldable(frame)
 
         bottom = QFrame()
         bottom.setObjectName("bottomBar")
@@ -1070,6 +1221,69 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.banner)
         return frame
 
+    def _make_foldable(self, frame: QFrame) -> None:
+        """Give a card a Hide/Show link in its title row that folds it down to that row. The card's contents
+        move into one body widget, so showing it again keeps each part's own shown/hidden state."""
+        lay = frame.layout()
+        first = lay.itemAt(0)
+        if first.widget() is not None:              # a plain title label: make it a row with room for the link
+            title = lay.takeAt(0).widget()
+            head = QHBoxLayout()
+            head.addWidget(title)
+            head.addStretch()
+            lay.insertLayout(0, head)
+        else:                                       # already a row (Library status)
+            head = first.layout()
+            title = next(head.itemAt(i).widget() for i in range(head.count())
+                         if isinstance(head.itemAt(i).widget(), QLabel))
+        body = QWidget()
+        body_lay = QVBoxLayout(body)
+        body_lay.setContentsMargins(0, 0, 0, 0)
+        body_lay.setSpacing(lay.spacing())
+        while lay.count() > 1:
+            stretch = lay.stretch(1)
+            item = lay.takeAt(1)
+            if item.widget() is not None:
+                body_lay.addWidget(item.widget(), stretch)
+            elif item.layout() is not None:
+                child = item.layout()
+                child.setParent(None)
+                body_lay.addLayout(child, stretch)
+            else:
+                body_lay.addItem(item)
+                body_lay.setStretch(body_lay.count() - 1, stretch)
+        lay.addWidget(body, 1)
+        toggle = link_button("Hide ▾")
+        name = title.text()
+        toggle.clicked.connect(lambda: self._set_card_open(name, not self.foldable[name][1].isVisibleTo(frame)))
+        head.addWidget(toggle)
+        self.foldable[name] = (frame, body, toggle)
+
+    def _set_card_open(self, name: str, open_: bool, save: bool = True) -> None:
+        frame, body, toggle = self.foldable[name]
+        body.setVisible(open_)
+        toggle.setText("Hide ▾" if open_ else "Show ▴")
+        frame.setSizePolicy(QSizePolicy.Policy.Preferred,
+                            QSizePolicy.Policy.Preferred if open_ else QSizePolicy.Policy.Maximum)
+        folded = [n for n in self.settings.collapsed_cards if n != name] + ([] if open_ else [name])
+        self.settings.collapsed_cards = folded
+        self._update_right_stretch()
+        if save:
+            self._save_settings()
+
+    def _apply_folded_cards(self) -> None:
+        for name in self.foldable:
+            self._set_card_open(name, name not in self.settings.collapsed_cards, save=False)
+
+    def _update_right_stretch(self) -> None:
+        """Spare height on the right goes to the activity log when it's shown, otherwise to the empty space below
+        the cards (never into a card, which would only add blank space inside it)."""
+        log_open = self.settings.show_log
+        self.right_col.setStretchFactor(self.activity_card, 1 if log_open else 0)
+        for c in self.right_cards:
+            self.right_col.setStretchFactor(c, 0)
+        self.right_col.setStretch(self.right_col.count() - 1, 0 if log_open else 1)
+
     def _build_activity_card(self) -> QFrame:
         frame, lay = card()
         head = QHBoxLayout()
@@ -1112,6 +1326,7 @@ class MainWindow(QMainWindow):
         self._update_camera_toggles()
         self._update_library_columns()
         self._set_log_visible(s.show_log)
+        self._apply_folded_cards()
         if self.checkpoint:
             self._show_paused_state()
 
@@ -1338,16 +1553,18 @@ class MainWindow(QMainWindow):
         self._set_log_visible(not self.settings.show_log)
 
     def _set_log_visible(self, visible: bool) -> None:
-        # Shown: the activity log takes the spare height. Hidden: the whole card goes, the cards above share the
-        # space, and a "Show activity" link in the bottom bar brings it back. The log keeps recording either way.
-        self.activity_card.setVisible(visible)
-        self.log_show_btn.setVisible(not visible)
-        for c in self.right_cards:
-            self.right_col.setStretchFactor(c, 0 if visible else 1)
-        self.log_toggle.setText("Hide ▾")
+        # Shown: the activity log takes the spare height. Hidden: the card shrinks to its header (with a "Show"
+        # link) at the bottom, and the cards above share the space. The log keeps recording either way.
+        self.log_view.setVisible(visible)
+        self.activity_card.setSizePolicy(QSizePolicy.Policy.Preferred,
+                                         QSizePolicy.Policy.Preferred if visible else QSizePolicy.Policy.Maximum)
+        self.log_toggle.setText("Hide ▾" if visible else "Show ▴")
+        self.log_toggle.setToolTip("" if visible else "Show the activity log (also under View > Show activity log)")
         if hasattr(self, "act_log") and self.act_log.isChecked() != visible:
             self.act_log.setChecked(visible)
         self.settings.show_log = visible
+        if hasattr(self, "foldable"):
+            self._update_right_stretch()
 
     # ---- menus -------------------------------------------------------------------------------------------
 
@@ -1389,9 +1606,17 @@ class MainWindow(QMainWindow):
         self.act_retry.setToolTip("Photos NASA refused (HTTP 403/404) are normally skipped on later runs. "
                                   "Tick this to try them all again on the next run.")
 
-        self._choice_menu(view_m, "Theme", [("Match operating system", "system")]
-                          + [(name, key) for name, key, _ in THEMES],
-                          "theme", after=self._apply_theme)
+        theme_options = [("Match operating system", "system")]
+        theme_options += [(g, sorted(((name, key) for group, name, key, _ in THEMES if group == g),
+                                     key=lambda choice: choice[0].casefold())) for g in THEME_GROUPS]
+        self._choice_menu(view_m, "Theme", theme_options, "theme", after=self._apply_theme)
+        # Hovering a theme previews it; clicking keeps it; closing the menu otherwise puts the chosen one back.
+        self.theme_previewing: str | None = None
+        self.theme_preview_timer = QTimer(self, singleShot=True, interval=90)   # skip themes passed over quickly
+        self.theme_preview_timer.timeout.connect(self._show_theme_preview)
+        for value, act in self.choice_actions["theme"]:
+            act.hovered.connect(lambda v=value: self._preview_theme(v))
+        view_m.aboutToHide.connect(self._end_theme_preview)
         units_m = view_m.addMenu("Units")
         self._choice_menu(units_m, "Data", [("Auto", "auto"), ("KB", "KB"), ("MB", "MB"), ("GB", "GB"),
                                             ("TB", "TB")], "data_unit")
@@ -1437,8 +1662,20 @@ class MainWindow(QMainWindow):
         menu = parent.addMenu(title)
         group = QActionGroup(menu)
         group.setExclusive(True)
-        for text, value in options:
-            act = menu.addAction(text)
+        flat = []
+        for text, value in options:          # a list as the value is a submenu of more choices
+            if isinstance(value, list):
+                sub = menu.addMenu(text)
+                flat += [(sub, t, v) for t, v in value]
+            else:
+                flat.append((menu, text, value))
+                menu.addAction(text)          # placeholder, so plain choices keep their place among the submenus
+        placeholders = [a for a in menu.actions() if a.menu() is None]
+        for where, text, value in flat:
+            if where is menu:
+                act = placeholders.pop(0)
+            else:
+                act = where.addAction(text)
             act.setCheckable(True)
             act.setChecked(getattr(self.settings, attr) == value)
             group.addAction(act)
@@ -1446,14 +1683,15 @@ class MainWindow(QMainWindow):
             self.choice_actions.setdefault(attr, []).append((value, act))
 
     # View menu choices, and the download options in the left column (File > Settings > Reset settings to defaults).
-    VIEW_FIELDS = ("data_unit", "speed_unit", "speed_window", "theme", "show_log")
+    VIEW_FIELDS = ("data_unit", "speed_unit", "speed_window", "theme", "show_log", "collapsed_cards")
     OPTION_FIELDS = ("rovers", "excluded_cameras", "check_existing", "sol_from", "sol_to", "workers", "limit_on",
                      "limit_files", "limit_period")
 
     def _reset_view(self) -> None:
         answer = QMessageBox.question(
             self, "Reset view options?",
-            "Put data and speed units, speed averaging, theme and the activity log back to their defaults?")
+            "Put data and speed units, speed averaging, theme, the activity log and folded cards back to their "
+            "defaults?")
         if answer != QMessageBox.StandardButton.Yes:
             return
         defaults = Settings()
@@ -1461,6 +1699,7 @@ class MainWindow(QMainWindow):
             setattr(self.settings, attr, getattr(defaults, attr))
         self._sync_choice_checks()
         self._set_log_visible(self.settings.show_log)
+        self._apply_folded_cards()
         self._apply_theme()
         self._update_counters()
         self._save_settings()
@@ -1502,8 +1741,32 @@ class MainWindow(QMainWindow):
         if after:
             after()
 
-    def _apply_theme(self) -> None:
-        choice = self.settings.theme
+    def _preview_theme(self, key: str) -> None:
+        self.theme_previewing = key
+        self.theme_preview_timer.start()
+
+    def _show_theme_preview(self) -> None:
+        """Restyle only the window's contents, not the open menus: restyling a menu while the mouse is on it
+        makes it redraw and shift."""
+        key = self.theme_previewing
+        if key is not None:
+            colors = THEME_COLORS.get(key) or (DARK if system_is_dark(self.app) else LIGHT)
+            apply_theme(self.app, colors, only=self.centralWidget())
+
+    def _end_theme_preview(self) -> None:
+        """The View menu closed. After a click the new theme is already saved; otherwise this restores the saved
+        one. Run once the click (if any) has been handled, since Qt closes the menu before reporting it."""
+        self.theme_preview_timer.stop()
+        if self.theme_previewing is not None:
+            self.theme_previewing = None
+            QTimer.singleShot(0, self._apply_theme)
+
+    def _apply_theme(self, choice: str | None = None) -> None:
+        central = self.centralWidget() if hasattr(self, "theme_previewing") else None
+        if central is not None and central.styleSheet():       # a preview was showing: back to the app's theme
+            central.setStyleSheet("")
+            central.setPalette(QPalette())
+        choice = choice or self.settings.theme
         if choice in THEME_COLORS:
             apply_theme(self.app, THEME_COLORS[choice])
         else:            # "system", or a theme this version doesn't have
