@@ -95,6 +95,29 @@ F. Download only new sols into staging, check them, then merge into `D:` with a 
 
 Old partial or changed sols are left alone (the old behaviour) unless steps B and E show that numbering matches.
 
+### Compatibility findings (Nov 20, 2026; SHA-256 comparison of Mars Vista downloads with the dump)
+| Sample | Dump files | Mars Vista (v1) | Result |
+|---|---|---|---|
+| Curiosity 1000 MAST | 838 | 553 | All 553 identical byte for byte. The dump's other 285 are thumbnails (2-5KB). |
+| Curiosity 3783 MAST | 284 | 142 | All 142 identical. The dump's other 142 are thumbnails. |
+| Curiosity 3784 NAVCAM | 26 | 26 | Identical, **same order** (n = position in Mars Vista ID order). |
+| Perseverance 300 NAVCAM_LEFT | 26 | 26 | Identical, same order, **after rewriting `_800.jpg` to `_1200.jpg`** |
+| Perseverance 733 MCZ_LEFT | 40 | 103 | The dump's 40 are identical, same order; the dump's sol 733 is **partial** |
+| Perseverance 733 NAVCAM_RIGHT | 1 | 1 | Identical with `_1200.jpg` |
+
+- Image bytes: Mars Vista's `img_src` points to the same NASA files. Curiosity URLs work as given. Perseverance URLs
+  must be changed from `_800.jpg` to `_1200.jpg` (v2 `images.large` gives the same URL).
+- Order: within a camera, `n` follows Mars Vista ID order (ascending) whenever no thumbnails are involved.
+- Thumbnails: the old API included Curiosity thumbnails as separate entries, in blocks between the full-size photos.
+  Mars Vista has none, so Curiosity sols with thumbnails **cannot** be rebuilt exactly. That matters only for sols
+  that are already on disk, and those are never rewritten.
+- The v1 endpoint is paginated (25 per page by default); the old API was not. You must request every page.
+- v2 quirks: the camera filter rejects Perseverance names (e.g. NAVCAM_LEFT) that its `/cameras` endpoint lists,
+  and paging with the default `-earth_date` sort returned 552 of 553 photos. **Use v1 for listings.**
+- Mars Vista has 4 Perseverance cameras the old API lacked: CACHECAM, LCAM, PIXL_MCC, SHERLOC_ACI.
+- Duplicates: both sides contain photos with identical bytes (e.g. Curiosity 1000 MAST dump files 14 and 570).
+- No `X-RateLimit-*` headers were seen on responses so far.
+
 ### Dev setup
 Work on branch `refactor/marsvista`. Use a `.venv` made with Python 3.10 (`py -3.10 -m venv .venv`), then
 `.venv\Scripts\pip install -r requirements-dev.txt`. The API key goes in the `MARSVISTA_API_KEY` environment variable.
