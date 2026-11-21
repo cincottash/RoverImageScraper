@@ -9,6 +9,8 @@ folder tree. Run it again later and it downloads only what's new or missing.
   these two rovers leave out many photos, and the PDS archive is NASA's permanent record of them. No API key or
   Mars Vista requests are needed for them.
 
+![The Rover Image Scraper desktop app after downloading a few sols of Perseverance and Spirit](docs/screenshot.png)
+
 ```
 <dest>/
   Curiosity/
@@ -112,8 +114,8 @@ What the window offers:
   When the limit is reached, an amber banner shows a countdown, and the download carries on by itself afterwards.
   Below it, *NASA archive* shows how many requests went to NASA's PDS archive this session (Spirit and
   Opportunity). That archive needs no key and has no request limit, so it's a count, not a meter.
-- **Activity:** the same log the command line prints. *Hide* collapses it to its title bar and gives the space
-  to the cards above.
+- **Activity:** the same log the command line prints. *Hide* removes it from the window and gives the space to
+  the cards above; *Show activity* in the bottom bar (or *View > Show activity log*) brings it back.
 - **Menus:**
   - *File*: choose or open the photo folder, *Settings*, quit.
   - *File > Settings*: retry photos NASA refused on the next run, open the app data folder, change where it is,
