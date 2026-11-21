@@ -1,7 +1,7 @@
 """Mars Vista API client. This is the only module that knows Mars Vista's URLs and JSON.
 
 The v1 (NASA-compatible) endpoints are used on purpose. In testing, the v2 camera filter rejected valid
-Perseverance camera names, and v2 paging with its default sort dropped a photo. See HANDOFF.md.
+Perseverance camera names, and v2 paging with its default sort dropped a photo.
 """
 from __future__ import annotations
 
