@@ -205,8 +205,9 @@ restarts, and refused photos are tried again on each run. Downloaded photos are 
 
 ## Command line
 
-The same downloads can run from a terminal, which is handy for scheduled updates. It runs from the source code
-(see [Running from the source code](#running-from-the-source-code)). Commands are run from the project folder; in
+The same downloads can run from a terminal, which is handy for scheduled updates. It runs from the source code:
+first follow [Running from the source code](#running-from-the-source-code), which creates the `.venv` folder these
+commands use. Commands are run from the project folder; in
 the examples, replace `C:\path\to\MarsPhotos` with your photo folder (on macOS or Linux, a path such as
 `~/MarsPhotos`). The folder must already exist.
 
@@ -248,17 +249,25 @@ instead, then open a new terminal: `setx MARSVISTA_API_KEY your_key_here` on Win
 
 ## Running from the source code
 
-Needed for the command line, and on macOS. You need **Python 3.10 or newer**.
+Needed for the command line, and on macOS. You need **Python 3.10 or newer**
+([python.org](https://www.python.org/downloads/)) and [Git](https://git-scm.com/downloads). Once, set up a private
+Python environment in the project's `.venv` folder with the libraries the app needs:
 
 ```bat
 git clone https://github.com/cincottash/RoverImageScraper
 cd RoverImageScraper
-py -3.10 -m venv .venv
+py -3 -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
+```
+
+Then start the desktop app from the project folder with:
+
+```bat
 .venv\Scripts\python rover_scraper\gui.py
 ```
 
-On macOS or Linux, use `python3 -m venv .venv`, `.venv/bin/pip` and `.venv/bin/python`.
+On macOS or Linux, use `python3 -m venv .venv`, `.venv/bin/pip` and `.venv/bin/python`. If `py -3` or `python3`
+picks a Python older than 3.10, name the version instead, such as `py -3.12` or `python3.12`.
 
 ## Standalone app
 
@@ -277,25 +286,26 @@ the desktop app only; the command line runs from the source code.
 
 ### Building them yourself
 
-The Windows `.exe` (on Windows, with Python 3.10):
+You need Python 3.10 or newer and a copy of the project (`git clone`, as above). No other setup is needed: the
+first build sets up its own Python environment with the libraries and PyInstaller, in `build-venv` inside the
+`--out` folder (a minute or two, about 250 MB). Later builds into the same folder reuse it, and update it when the
+requirements change. If the Python you run it with already has them installed, it's used as is.
+
+The Windows `.exe`, on Windows, from the project folder:
 
 ```bat
-py -3.10 -m venv build-venv
-build-venv\Scripts\pip install -r requirements.txt -r packaging\requirements-build.txt
-build-venv\Scripts\python packaging\build_exe.py --out C:\path\to\builds
+py -3 packaging\build_exe.py --out C:\path\to\builds
 ```
 
-The Linux AppImage (on 64-bit Linux, with Python 3.10 and
-[appimagetool](https://github.com/AppImage/appimagetool/releases)). It runs on distributions at least as new as
+The Linux AppImage, on 64-bit Linux, from the project folder, with
+[appimagetool](https://github.com/AppImage/appimagetool/releases). It runs on distributions at least as new as
 the one it's built on:
 
 ```sh
-python3.10 -m venv build-venv
-build-venv/bin/pip install -r requirements.txt -r packaging/requirements-build.txt
-build-venv/bin/python packaging/build_appimage.py --out ~/builds --appimagetool /path/to/appimagetool
+python3 packaging/build_appimage.py --out ~/builds --appimagetool /path/to/appimagetool
 ```
 
-Each build goes into a new dated subfolder of `--out`.
+Each build goes into a new dated subfolder of `--out`. The release builds use Python 3.10.
 
 ### Automatic builds and releases
 
@@ -323,7 +333,8 @@ All program code is in `rover_scraper/`:
 - `state.py`: the app data folder, and the photos NASA refuses to serve. `settings.py`: the app's saved settings.
 - `check.svg` and `check_dark.svg`: the tick drawn in checkboxes (white, or dark on light accent colors).
 
-Packaging: `packaging/build_exe.py` (Windows), `packaging/build_appimage.py` (Linux), `packaging/make_icon.py` and
+Packaging: `packaging/build_exe.py` (Windows), `packaging/build_appimage.py` (Linux), `packaging/build_env.py`
+(sets up the build's Python environment when needed), `packaging/make_icon.py` and
 `packaging/icon.svg` (the app icon), and `packaging/requirements-build.txt` (the build tools, pinned).
 
 ## License
