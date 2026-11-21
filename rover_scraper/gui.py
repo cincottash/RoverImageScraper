@@ -11,13 +11,14 @@ import collections
 import math
 import os
 import queue
+import shutil
 import sys
 import tempfile
 import threading
 import time
 import traceback
 
-from PySide6.QtCore import QEvent, Qt, QTimer, QUrl
+from PySide6.QtCore import QEvent, QProcess, Qt, QTimer, QUrl
 from PySide6.QtGui import QActionGroup, QColor, QDesktopServices, QFont, QIntValidator, QKeySequence, QPalette
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QGridLayout,
                                QComboBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
@@ -33,14 +34,23 @@ from scan import RoverStatus, ScanStore, full_check, quick_scan
 from scraper import Report, Scraper
 from dataclasses import asdict
 from settings import Settings
-from state import Unavailable, default_state_dir
+from state import (APP_DATA_FILES, Unavailable, chosen_state_dir, copy_app_data, default_state_dir, save_state_dir,
+                   standard_state_dir)
 
-STATE_DIR = default_state_dir()
-SETTINGS_PATH = os.path.join(STATE_DIR, "settings.json")
-SCANS_PATH = os.path.join(STATE_DIR, "scans.json")
-REQUESTS_PATH = os.path.join(STATE_DIR, "requests.json")
-UNAVAILABLE_PATH = os.path.join(STATE_DIR, "unavailable.json")
-PAUSE_PATH = os.path.join(STATE_DIR, "paused.json")      # no longer written; removed if an old version left one
+
+
+def use_state_dir(path: str) -> None:
+    """Point the app at its data folder (settings, scan results, request counts, refused photos)."""
+    global STATE_DIR, SETTINGS_PATH, SCANS_PATH, REQUESTS_PATH, UNAVAILABLE_PATH, PAUSE_PATH
+    STATE_DIR = path
+    SETTINGS_PATH = os.path.join(path, "settings.json")
+    SCANS_PATH = os.path.join(path, "scans.json")
+    REQUESTS_PATH = os.path.join(path, "requests.json")
+    UNAVAILABLE_PATH = os.path.join(path, "unavailable.json")
+    PAUSE_PATH = os.path.join(path, "paused.json")      # no longer written; removed if an old version left one
+
+
+use_state_dir(default_state_dir())
 
 AVG_PHOTO_MB = 0.2          # observed average across Curiosity and Perseverance downloads
 ALL_ROVERS = SUPPORTED_ROVERS
@@ -366,6 +376,141 @@ class CameraPanel(QWidget):
 
     def counts(self) -> tuple[int, int]:
         return sum(b.isChecked() for b in self.boxes.values()), len(self.boxes)
+
+
+# ---- first-run setup -------------------------------------------------------------------------------------
+
+def free_space_text(path: str) -> str:
+    """Free space on the drive a path is (or would be) on, e.g. "D: has 1.7 TB free"."""
+    probe = os.path.abspath(path) if path else ""
+    while probe and not os.path.exists(probe):
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            return ""
+        probe = parent
+    if not probe:
+        return ""
+    try:
+        free = shutil.disk_usage(probe).free
+    except OSError:
+        return ""
+    drive = os.path.splitdrive(probe)[0]
+    return f"{drive} has {fmt_size(free)} free" if drive else f"{fmt_size(free)} free"
+
+
+def program_location() -> str:
+    return sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__)
+
+
+class SetupDialog(QDialog):
+    """First-run setup (and Settings > Change app data folder): where the app keeps its own files and, on first
+    run, where photos go. Each can be on a different drive from the program."""
+
+    def __init__(self, parent=None, current: str | None = None, first_run: bool = True):
+        super().__init__(parent)
+        self.first_run = first_run
+        self.old_dir = current or standard_state_dir()
+        self.setWindowTitle("First-time setup" if first_run else "Change app data folder")
+        self.setMinimumWidth(620)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(22, 18, 22, 16)
+        lay.setSpacing(8)
+        if first_run:
+            lay.addWidget(label("Welcome to Rover Image Scraper", "big"))
+            lay.addWidget(label("Choose where the app keeps its files. Each can be on any drive, and they don't "
+                                "have to be on the drive the program runs from.", "muted", wrap=True))
+        self.data_edit, self.data_free = self._folder_row(
+            lay, "App data folder",
+            "Settings, scan results, Mars Vista request counts and the list of photos NASA refused. A few "
+            "megabytes.", standard_state_dir() if first_run else self.old_dir)
+        self.photo_edit = self.photo_free = None
+        if first_run:
+            self.photo_edit, self.photo_free = self._folder_row(
+                lay, "Photo folder (optional)",
+                "Where photos are saved. All four rovers come to several hundred gigabytes. You can also choose "
+                "or change this later in the main window.", "")
+        self.has_old = has_old = any(os.path.isfile(os.path.join(self.old_dir, n)) for n in APP_DATA_FILES)
+        self.copy_box = QCheckBox(f"Copy my existing app data from {self.old_dir}")
+        self.copy_box.setChecked(True)
+        self.copy_box.setToolTip("Copies settings, scan results, request counts and refused photos. The originals "
+                                 "are left where they are.")
+        self.copy_box.setVisible(has_old)
+        lay.addWidget(self.copy_box)
+        info = [f"The program itself runs from {program_location()}.",
+                "Your Mars Vista API key is kept in Windows Credential Manager, not in a file."]
+        if getattr(sys, "frozen", False):
+            info.append("Each time it starts, the program unpacks itself into Windows' temporary folder (about "
+                        "90 MB); that copy is removed when it closes.")
+        lay.addWidget(label(" ".join(info), "muted", wrap=True))
+        bb = QDialogButtonBox()
+        ok = bb.addButton("Continue" if first_run else "Copy and restart", QDialogButtonBox.ButtonRole.AcceptRole)
+        ok.setObjectName("primary")
+        bb.addButton("Quit" if first_run else "Cancel", QDialogButtonBox.ButtonRole.RejectRole)
+        bb.accepted.connect(self._accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self._refresh()
+
+    def _folder_row(self, lay, title: str, hint: str, value: str):
+        lay.addSpacing(6)
+        lay.addWidget(label(title.upper(), "cardTitle"))
+        row = QHBoxLayout()
+        edit = QLineEdit(value)
+        edit.textChanged.connect(self._refresh)
+        row.addWidget(edit, 1)
+        browse = QPushButton("Browse…")
+        browse.clicked.connect(lambda: self._browse(edit))
+        row.addWidget(browse)
+        lay.addLayout(row)
+        lay.addWidget(label(hint, "muted", wrap=True))
+        free = label("", "muted")
+        lay.addWidget(free)
+        return edit, free
+
+    def _browse(self, edit: QLineEdit) -> None:
+        start = edit.text().strip() or os.path.expanduser("~")
+        folder = QFileDialog.getExistingDirectory(self, "Choose folder", start)
+        if folder:
+            edit.setText(os.path.normpath(folder))
+
+    def _refresh(self) -> None:
+        if not hasattr(self, "copy_box"):            # still being built
+            return
+        self.data_free.setText(free_space_text(self.data_edit.text().strip()))
+        if self.photo_edit is not None:
+            self.photo_free.setText(free_space_text(self.photo_edit.text().strip()))
+        same = os.path.normcase(self.data_dir()) == os.path.normcase(os.path.abspath(self.old_dir))
+        self.copy_box.setEnabled(not same)
+
+    def data_dir(self) -> str:
+        return os.path.abspath(self.data_edit.text().strip() or ".")
+
+    def photo_dir(self) -> str:
+        return self.photo_edit.text().strip() if self.photo_edit is not None else ""
+
+    def _accept(self) -> None:
+        if not self.data_edit.text().strip():
+            QMessageBox.warning(self, "No folder", "Choose a folder for the app's data.")
+            return
+        try:
+            os.makedirs(self.data_dir(), exist_ok=True)
+        except OSError as e:
+            QMessageBox.warning(self, "Couldn't use this folder", f"{self.data_dir()}\n\n{e}")
+            return
+        self.accept()
+
+    def apply(self) -> list[str]:
+        """Copy existing data if asked, remember the choice, and point the app at it. Returns files copied."""
+        copied = []
+        if self.has_old and self.copy_box.isEnabled() and self.copy_box.isChecked():
+            copied = copy_app_data(self.old_dir, self.data_dir())
+        save_state_dir(self.data_dir())
+        use_state_dir(self.data_dir())
+        if self.photo_dir():
+            s = Settings.load(SETTINGS_PATH)
+            s.folder = os.path.normpath(self.photo_dir())
+            s.save(SETTINGS_PATH)
+        return copied
 
 
 # ---- main window -----------------------------------------------------------------------------------------
@@ -1099,8 +1244,10 @@ class MainWindow(QMainWindow):
         self.act_retry.setCheckable(True)
         self.act_retry.setToolTip("Photos NASA refused (HTTP 403/404) are normally skipped on later runs. "
                                   "Tick this to try them all again on the next run.")
-        folder_act = settings_m.addAction("Open settings folder")
+        folder_act = settings_m.addAction("Open app data folder")
         folder_act.triggered.connect(self._open_settings_folder)
+        self.act_move_data = settings_m.addAction("Change app data folder…")
+        self.act_move_data.triggered.connect(self._change_data_folder)
 
         site = help_m.addAction("Mars Vista website")
         site.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://marsvista.dev")))
@@ -1134,6 +1281,22 @@ class MainWindow(QMainWindow):
     def _open_settings_folder(self) -> None:
         os.makedirs(STATE_DIR, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(STATE_DIR))
+
+    def _change_data_folder(self) -> None:
+        if self.mode != "idle":
+            QMessageBox.information(self, "Busy", "Stop the current task before moving the app's data.")
+            return
+        self._save_settings()
+        self.tracker.save()
+        dlg = SetupDialog(self, current=STATE_DIR, first_run=False)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        if os.path.normcase(dlg.data_dir()) == os.path.normcase(os.path.abspath(STATE_DIR)):
+            return
+        dlg.apply()
+        self.close()                        # saves settings into the new folder, then a fresh copy starts there
+        args = sys.argv[1:] if getattr(sys, "frozen", False) else [os.path.abspath(__file__)] + sys.argv[1:]
+        QProcess.startDetached(sys.executable, args)
 
     def _about(self) -> None:
         QMessageBox.about(self, "About Rover Image Scraper",
@@ -1791,7 +1954,9 @@ class MainWindow(QMainWindow):
         now = time.time() if running else (self.run_ended or time.time())
         s = self.settings
         window = s.speed_window
-        self.counter_heads["Speed"].setText(f"Speed ({window} s)")
+        self.counter_heads["Speed"].setText(f"Speed (last {window} s)")
+        self.counter_heads["Speed"].setToolTip(f"Download speed averaged over the last {window} seconds. "
+                                               "Change it under View > Speed averaged over.")
         if running:
             self.speed_samples.append((now, r.bytes_received, r.downloaded))
             while len(self.speed_samples) > 2 and now - self.speed_samples[1][0] >= window:
@@ -1857,7 +2022,7 @@ class MainWindow(QMainWindow):
                 self.lib_cells[(row, rover)].setText(text)
             if st.new_sols is not None:
                 has_new = True
-            disk = "not scanned" if st.sols_on_disk is None else f"{st.sols_on_disk:,} sols on disk"
+            disk = "not scanned" if st.sols_on_disk is None else f"{st.sols_on_disk:,} sol{'' if st.sols_on_disk == 1 else 's'} on disk"
             self.rover_status[rover].setText(disk + (f" · latest {latest:,}" if latest is not None else ""))
         self.lib_note.setVisible(has_new)      # only once "To download" shows numbers
         if not scanned:
@@ -1899,6 +2064,14 @@ def main() -> int:
     app.setApplicationName("Rover Image Scraper")
     app.setStyle("Fusion")
     app.setFont(QFont("Segoe UI", 10))
+
+    if chosen_state_dir() is None:                  # first run: ask where the app's files go
+        apply_theme(app, DARK if system_is_dark(app) else LIGHT)
+        setup = SetupDialog()
+        if setup.exec() != QDialog.DialogCode.Accepted:
+            return 0
+        setup.apply()
+        setup.deleteLater()
 
     win = MainWindow(app)
     win._apply_theme()

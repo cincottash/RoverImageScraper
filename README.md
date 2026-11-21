@@ -98,13 +98,18 @@ What the window offers:
 - **Activity:** the same log the command line prints.
 - **Menus:**
   - *File*: choose or open the photo folder, quit.
-  - *Settings*: retry photos NASA refused on the next run, and open the settings folder.
+  - *Settings*: retry photos NASA refused on the next run, open the app data folder, and change where it is.
   - *View*: units for data (KB/MB/GB/TB) and speed (KB/s, MB/s, Mbit/s), how long the speed is averaged over,
     light/dark theme, and showing or hiding the activity log.
   - *Help*: the Mars Vista website and About.
 
-Settings, scan results and the request counts are saved in `%LOCALAPPDATA%\RoverImageScraper\` (on macOS/Linux,
-`~/.local/share/RoverImageScraper/`), never in the repo or the photo folder.
+**First run:** the app asks where to keep its own files and, optionally, where to save photos. The *app data
+folder* holds settings, scan results, request counts and the list of photos NASA refused (a few megabytes). Each
+can be on any drive, separate from the program and from each other. The suggested app data folder is
+`%LOCALAPPDATA%\RoverImageScraper\` (on macOS/Linux, `~/.local/share/RoverImageScraper/`). The choice is
+remembered in the Windows registry for your user (`HKCU\Software\RoverImageScraper`), and the command line uses
+the same folder. To move it later, use *Settings > Change app data folder*: the files are copied (the originals
+are left in place) and the app restarts. Nothing is ever kept in the repo or the photo folder.
 
 ## Command line
 
@@ -161,9 +166,8 @@ To run from any other folder, use full paths to both `python.exe` (inside `.venv
   and sub-frame images, leaving out thumbnails and calibration images. This matches what the old Mars Rover
   Photos API offered. A sol without photos is answered in a fraction of a second, so checking every sol of
   these finished missions is quick.
-- NASA no longer serves some older images (HTTP 403/404). These are remembered in
-  `%LOCALAPPDATA%\RoverImageScraper\unavailable.json` (on macOS/Linux, `~/.local/share/RoverImageScraper/`) so
-  they don't count as missing on every run.
+- NASA no longer serves some older images (HTTP 403/404). These are remembered in `unavailable.json` in the app
+  data folder, so they don't count as missing on every run.
 
 ### Limits
 
@@ -179,22 +183,17 @@ To run from any other folder, use full paths to both `python.exe` (inside `.venv
 
 ## Standalone app (Windows)
 
-The desktop app can be packaged with [PyInstaller](https://pyinstaller.org) into a program that carries its own
-private copy of Python and the libraries. It runs on a Windows PC without Python, needs nothing downloaded to
-start, and installs nothing: delete its folder and it's gone. Settings are kept in the same place as above.
-
-Two forms are built:
-
-- **Folder version** (recommended): a `RoverImageScraper` folder with `RoverImageScraper.exe` inside, about
-  90 MB, shared as a zip of about 35 MB. Unzip it anywhere and double-click the `.exe`.
-- **Single file**: one `RoverImageScraper.exe` of about 35 MB. Each time it starts it unpacks itself into a
-  temporary folder (removed when it closes), so it starts a little more slowly.
+The desktop app can be packaged with [PyInstaller](https://pyinstaller.org) into a single `RoverImageScraper.exe`
+of about 35 MB. It carries its own private copy of Python and the libraries, so it runs on a Windows PC without
+Python and needs nothing downloaded to start. Each time it starts it unpacks itself into Windows' temporary
+folder (about 90 MB); that copy is removed when it closes. On first run it asks where to keep its files (see
+above).
 
 Windows may show *"Windows protected your PC"* the first time, because the program isn't code-signed. Click
 *More info*, then *Run anyway*.
 
 To build it, use a separate virtual environment with the requirements and PyInstaller, then run the build script.
-Each build goes into a new dated subfolder of `--out`:
+Each build goes into a new dated subfolder of `--out`, which ends up holding only the `.exe`:
 
 ```bat
 py -3.10 -m venv build-venv
@@ -202,8 +201,7 @@ build-venv\Scripts\pip install -r requirements.txt pyinstaller
 build-venv\Scripts\python packaging\build_exe.py --out C:\path\to\builds
 ```
 
-Add `--only folder` or `--only single` to build just one form. The standalone app is the desktop app only; the
-command line runs from the source code as described above.
+The standalone app is the desktop app only; the command line runs from the source code as described above.
 
 ## Code layout
 
@@ -219,8 +217,8 @@ All code is in `rover_scraper/`:
 - `scraper.py`: runs the checks and downloads.
 - `scan.py`: library status (quick scan and full check).
 - `download.py`: downloads that never overwrite existing files.
-- `state.py`: remembers photos NASA refuses to serve.
+- `state.py`: where the app data folder is, and the photos NASA refuses to serve.
 - `settings.py`: the desktop app's saved settings.
 - `check.svg`: the tick drawn in checkboxes.
 
-`packaging/build_exe.py` builds the standalone app.
+`packaging/build_exe.py` builds the standalone `.exe`.
