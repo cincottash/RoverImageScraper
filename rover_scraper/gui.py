@@ -653,6 +653,12 @@ class MainWindow(QMainWindow):
         self.preview_btn.setToolTip("Estimate what a download would add, without downloading anything")
         self.preview_btn.clicked.connect(self._preview)
         bl.addWidget(self.preview_btn)
+        # Shown only while the activity log is hidden, to bring it back.
+        self.log_show_btn = link_button("Show activity ▴")
+        self.log_show_btn.setToolTip("Show the activity log again (also under View > Show activity log)")
+        self.log_show_btn.clicked.connect(lambda: self._set_log_visible(True))
+        self.log_show_btn.setVisible(False)
+        bl.addWidget(self.log_show_btn)
         bl.addStretch()
         self.start_hint = label("", "muted")             # why Start is greyed out, when it is
         self.start_hint.setProperty("tone", "warn")
@@ -1218,16 +1224,16 @@ class MainWindow(QMainWindow):
         self.adv_toggle.setText("Advanced ▾" if self.adv.isVisible() else "Advanced ▸")
 
     def _toggle_log(self) -> None:
-        self._set_log_visible(not self.log_view.isVisible())
+        self._set_log_visible(not self.settings.show_log)
 
     def _set_log_visible(self, visible: bool) -> None:
-        self.log_view.setVisible(visible)
-        # Shown: the activity log takes the spare height. Hidden: its card shrinks to the header and the cards
-        # above share the space instead.
-        self.right_col.setStretchFactor(self.activity_card, 1 if visible else 0)
+        # Shown: the activity log takes the spare height. Hidden: the whole card goes, the cards above share the
+        # space, and a "Show activity" link in the bottom bar brings it back. The log keeps recording either way.
+        self.activity_card.setVisible(visible)
+        self.log_show_btn.setVisible(not visible)
         for c in self.right_cards:
             self.right_col.setStretchFactor(c, 0 if visible else 1)
-        self.log_toggle.setText("Hide ▾" if visible else "Show ▸")
+        self.log_toggle.setText("Hide ▾")
         if hasattr(self, "act_log") and self.act_log.isChecked() != visible:
             self.act_log.setChecked(visible)
         self.settings.show_log = visible
