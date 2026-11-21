@@ -12,10 +12,10 @@ from typing import Callable, Iterable, Iterator
 
 import requests
 
-from .api import MarsVistaClient, Photo
-from .download import fetch_bytes, head_size, make_session, save_new_file
-from .plan import Action, CameraPlan, cameras_short, disk_camera_counts, exact_match, plan_sol
-from .state import PERMANENT_STATUSES, Unavailable
+from api import MarsVistaClient, Photo
+from download import fetch_bytes, head_size, make_session, save_new_file
+from plan import Action, CameraPlan, cameras_short, disk_camera_counts, exact_match, plan_sol
+from state import PERMANENT_STATUSES, Unavailable
 
 
 @dataclass

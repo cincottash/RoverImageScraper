@@ -46,19 +46,24 @@ numbered 0, 1, 2… within each camera folder. Files have no extension, but they
 Pass the folder you want the photos saved in. It can be on any drive, and it must already exist. In the examples
 below, replace `C:\path\to\MarsPhotos` with your folder (on macOS or Linux, a path such as `~/MarsPhotos`).
 
+Run the commands from the project folder (the one containing `rover_scraper\`).
+
 ```bat
 :: First download into an empty folder (all of Curiosity and Perseverance: about 1.3 million photos, ~270 GB)
-.venv\Scripts\python main.py "C:\path\to\MarsPhotos"
+.venv\Scripts\python rover_scraper\main.py "C:\path\to\MarsPhotos"
 
 :: Preview what would be downloaded, without writing anything
-.venv\Scripts\python main.py "C:\path\to\MarsPhotos" --dry-run
+.venv\Scripts\python rover_scraper\main.py "C:\path\to\MarsPhotos" --dry-run
 
 :: Update a folder that already has photos (adds missing files only)
-.venv\Scripts\python main.py "C:\path\to\MarsPhotos" --allow-existing
+.venv\Scripts\python rover_scraper\main.py "C:\path\to\MarsPhotos" --allow-existing
 
 :: Only one rover, only some sols
-.venv\Scripts\python main.py "C:\path\to\MarsPhotos" --allow-existing --rovers perseverance --sol-min 1000 --sol-max 1100
+.venv\Scripts\python rover_scraper\main.py "C:\path\to\MarsPhotos" --allow-existing --rovers perseverance --sol-min 1000 --sol-max 1100
 ```
+
+To run from any other folder, use full paths to both `python.exe` (inside `.venv\Scripts\`) and
+`rover_scraper\main.py`. On macOS or Linux, use `.venv/bin/python rover_scraper/main.py ...`.
 
 | Option | Meaning |
 |---|---|
@@ -96,7 +101,12 @@ below, replace `C:\path\to\MarsPhotos` with your folder (on macOS or Linux, a pa
 
 ## Code layout
 
-- `rover_scraper/api.py`: the Mars Vista client (the only code that knows the API).
-- `rover_scraper/plan.py`: decides what's missing.
-- `rover_scraper/scraper.py`: runs downloads.
-- `rover_scraper/cli.py`: the command line.
+All code is in `rover_scraper/`:
+
+- `main.py`: the program to run.
+- `cli.py`: command-line options and the end-of-run summary.
+- `api.py`: the Mars Vista client (the only code that knows the API).
+- `plan.py`: decides what's missing.
+- `scraper.py`: runs the checks and downloads.
+- `download.py`: downloads that never overwrite existing files.
+- `state.py`: remembers photos NASA refuses to serve.
