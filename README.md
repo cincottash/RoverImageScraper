@@ -63,7 +63,8 @@ From the project folder:
 1. Choose a **photo folder** (any drive) and paste your **API key**. If the folder doesn't exist yet, the app
    offers to create it when you start, scan or open it.
 2. Click **Quick scan** to see what's already in the folder and what's new on Mars Vista.
-3. Optionally click **Preview** to see roughly how many photos and gigabytes a download would add.
+3. Optionally click **Preview** to see roughly how many photos and gigabytes a download would add, and where
+   they'll be saved (with the free space on that drive).
 4. Click **Start**.
 
 Pausing and stopping:
@@ -98,9 +99,10 @@ What the window offers:
 - **Activity:** the same log the command line prints.
 - **Menus:**
   - *File*: choose or open the photo folder, quit.
-  - *Settings*: retry photos NASA refused on the next run, open the app data folder, and change where it is.
+  - *Settings*: retry photos NASA refused on the next run, open the app data folder, change where it is, and
+    reset the download settings (rovers, cameras, sol range, limit and so on) to their defaults.
   - *View*: units for data (KB/MB/GB/TB) and speed (KB/s, MB/s, Mbit/s), how long the speed is averaged over,
-    light/dark theme, and showing or hiding the activity log.
+    light/dark theme, showing or hiding the activity log, and *Reset view options*.
   - *Help*: the Mars Vista website and About.
 
 **First run:** the app asks where to keep its own files and, optionally, where to save photos. The *app data

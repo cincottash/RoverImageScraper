@@ -8,6 +8,7 @@ responsive, and Stop works like Ctrl+C in the command line: finished photos are 
 from __future__ import annotations
 
 import collections
+import html
 import math
 import os
 import queue
@@ -539,6 +540,7 @@ class MainWindow(QMainWindow):
         self.pos: dict = {}                      # where the current download is: rover, rover_index, sol, sol_min
         # A paused download, kept in memory only: it lasts until Stop, a new Start, or closing the app.
         self.checkpoint: dict | None = None
+        self.choice_actions: dict[str, list] = {}  # View menu: setting name -> [(value, action)]
         self.pds_requests = RequestCounter()      # NASA archive requests this session (no quota)
         self.limiter: FileLimiter | None = None   # the user's download limit, kept across Pause/Resume
         remove_old_pause_file()
@@ -1238,6 +1240,8 @@ class MainWindow(QMainWindow):
         self.act_log.setCheckable(True)
         self.act_log.setChecked(self.settings.show_log)
         self.act_log.toggled.connect(self._set_log_visible)
+        view_m.addSeparator()
+        view_m.addAction("Reset view options").triggered.connect(self._reset_view)
 
         settings_m.setToolTipsVisible(True)
         self.act_retry = settings_m.addAction("Retry photos NASA refused (next run)")
@@ -1248,6 +1252,8 @@ class MainWindow(QMainWindow):
         folder_act.triggered.connect(self._open_settings_folder)
         self.act_move_data = settings_m.addAction("Change app data folder…")
         self.act_move_data.triggered.connect(self._change_data_folder)
+        settings_m.addSeparator()
+        settings_m.addAction("Reset settings to defaults…").triggered.connect(self._reset_settings)
 
         site = help_m.addAction("Mars Vista website")
         site.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://marsvista.dev")))
@@ -1265,9 +1271,60 @@ class MainWindow(QMainWindow):
             act.setChecked(getattr(self.settings, attr) == value)
             group.addAction(act)
             act.triggered.connect(lambda _=False, v=value: self._set_view_option(attr, v, after))
+            self.choice_actions.setdefault(attr, []).append((value, act))
+
+    # View menu choices, and the download options in the left column (Settings > Reset settings to defaults).
+    VIEW_FIELDS = ("data_unit", "speed_unit", "speed_window", "theme", "show_log")
+    OPTION_FIELDS = ("rovers", "excluded_cameras", "check_existing", "sol_from", "sol_to", "workers", "limit_on",
+                     "limit_files", "limit_period")
+
+    def _reset_view(self) -> None:
+        answer = QMessageBox.question(
+            self, "Reset view options?",
+            "Put data and speed units, speed averaging, theme and the activity log back to their defaults?")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        defaults = Settings()
+        for attr in self.VIEW_FIELDS:
+            setattr(self.settings, attr, getattr(defaults, attr))
+        self._sync_choice_checks()
+        self._set_log_visible(self.settings.show_log)
+        self._apply_theme()
+        self._update_counters()
+        self._save_settings()
+        self._log("View options reset to defaults.")
+
+    def _reset_settings(self) -> None:
+        if self.mode != "idle":
+            QMessageBox.information(self, "Busy", "Stop the current task before resetting settings.")
+            return
+        answer = QMessageBox.question(
+            self, "Reset settings to defaults?",
+            "Reset rovers, cameras, \"Check existing sols\", the sol range, parallel downloads, the download "
+            "limit and \"Retry photos NASA refused\" to their defaults?\n\n"
+            "Kept as they are: the photo folder, the API key, the app data folder, scan results and request "
+            "counts. View options have their own reset under View.")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        defaults = Settings()
+        for attr in self.OPTION_FIELDS:
+            setattr(self.settings, attr, getattr(defaults, attr))
+        self.saved_excluded = {}
+        self.act_retry.setChecked(False)
+        self._load_settings_into_widgets()
+        self._save_settings()
+        self._validate()
+        self._log("Settings reset to defaults.")
+
+    def _sync_choice_checks(self) -> None:
+        """Tick the View menu entries that match the current settings."""
+        for attr, actions in self.choice_actions.items():
+            for value, act in actions:
+                act.setChecked(getattr(self.settings, attr) == value)
 
     def _set_view_option(self, attr: str, value, after=None) -> None:
         setattr(self.settings, attr, value)
+        self._sync_choice_checks()
         self._save_settings()
         self._update_counters()
         if after:
@@ -1805,6 +1862,17 @@ class MainWindow(QMainWindow):
         lay = QVBoxLayout(dlg)
         lay.setContentsMargins(20, 18, 20, 16)
         lay.addWidget(label("This run would download about:", "big"))
+        folder = self._folder()
+        if folder:
+            where = f"Saving to <b>{html.escape(folder)}</b>"
+            free = free_space_text(folder)
+            if free:
+                where += f" ({free})"
+            if not os.path.isdir(folder):
+                where += ". This folder doesn't exist yet; Start will offer to create it."
+        else:
+            where = "No photo folder chosen yet. Choose one before starting."
+        lay.addWidget(label(where, "muted", wrap=True))
         grid = QGridLayout()
         grid.setHorizontalSpacing(24)
         for c, head in enumerate(("", "New sols", "New photos", "Gap fills", "Size")):
