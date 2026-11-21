@@ -220,6 +220,7 @@ def apply_theme(app: QApplication, t: dict) -> None:
         QLineEdit:focus, QSpinBox:focus {{ border: 1px solid {t['accent']}; }}
         QLineEdit[missing="true"] {{ border: 1px solid {t['warn_border']}; background: {t['warn_bg']}; }}
         QLineEdit:disabled, QSpinBox:disabled {{ color: {t['muted']}; }}
+        QSpinBox QLineEdit {{ border: none; padding: 0px; background: transparent; }}
         QPushButton {{ background: {t['card']}; border: 1px solid {t['border']}; border-radius: 6px;
                       padding: 6px 14px; }}
         QPushButton:hover {{ border-color: {t['accent']}; }}
@@ -622,10 +623,13 @@ class MainWindow(QMainWindow):
         self._build_options_card()
         self.left_col.addStretch()
 
-        right.addWidget(self._build_library_card())
-        right.addWidget(self._build_progress_card())
-        right.addWidget(self._build_usage_card())
-        right.addWidget(self._build_activity_card(), 1)
+        self.right_col = right
+        self.right_cards = [self._build_library_card(), self._build_progress_card(), self._build_usage_card()]
+        for c in self.right_cards:
+            c.layout().addStretch(1)       # contents stay at the top when a card is given extra height
+            right.addWidget(c)
+        self.activity_card = self._build_activity_card()
+        right.addWidget(self.activity_card, 1)
 
         bottom = QFrame()
         bottom.setObjectName("bottomBar")
@@ -765,11 +769,11 @@ class MainWindow(QMainWindow):
         self.limit_box.setToolTip("Download at most this many photos in any rolling minute, hour or day. When the "
                                   "limit is reached the download waits, then continues by itself.")
         self.limit_box.toggled.connect(self._validate)
-        self.limit_files = QSpinBox()
-        self.limit_files.setRange(1, 1_000_000)
-        self.limit_files.setGroupSeparatorShown(True)
-        self.limit_files.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)    # a plain number box
+        # A plain number field like the sol boxes (a spin box without arrows collapses under the style sheet).
+        self.limit_files = QLineEdit("500")
+        self.limit_files.setValidator(QIntValidator(1, 1_000_000))
         self.limit_files.setFixedWidth(95)
+        self.limit_files.editingFinished.connect(lambda: self.limit_files.setText(str(self._limit_value())))
         self.limit_period = QComboBox()
         self.limit_period.addItems(list(PERIODS))
         lim.addWidget(self.limit_box)
@@ -978,7 +982,7 @@ class MainWindow(QMainWindow):
         self.sol_to.setText(s.sol_to)
         self.workers.setValue(s.workers)
         self.limit_box.setChecked(s.limit_on)
-        self.limit_files.setValue(max(1, s.limit_files))
+        self.limit_files.setText(str(max(1, s.limit_files)))
         self.limit_period.setCurrentText(s.limit_period if s.limit_period in PERIODS else "hour")
         self._loading = False
         self._update_camera_toggles()
@@ -1000,7 +1004,7 @@ class MainWindow(QMainWindow):
         s.sol_from, s.sol_to = self.sol_from.text().strip(), self.sol_to.text().strip()
         s.workers = self.workers.value()
         s.limit_on = self.limit_box.isChecked()
-        s.limit_files, s.limit_period = self.limit_files.value(), self.limit_period.currentText()
+        s.limit_files, s.limit_period = self._limit_value(), self.limit_period.currentText()
 
     def _save_settings(self) -> None:
         self._collect_settings()
@@ -1203,6 +1207,11 @@ class MainWindow(QMainWindow):
 
     def _set_log_visible(self, visible: bool) -> None:
         self.log_view.setVisible(visible)
+        # Shown: the activity log takes the spare height. Hidden: its card shrinks to the header and the cards
+        # above share the space instead.
+        self.right_col.setStretchFactor(self.activity_card, 1 if visible else 0)
+        for c in self.right_cards:
+            self.right_col.setStretchFactor(c, 0 if visible else 1)
         self.log_toggle.setText("Hide ▾" if visible else "Show ▸")
         if hasattr(self, "act_log") and self.act_log.isChecked() != visible:
             self.act_log.setChecked(visible)
@@ -1213,7 +1222,6 @@ class MainWindow(QMainWindow):
     def _build_menus(self) -> None:
         mb = self.menuBar()
         file_m = mb.addMenu("&File")
-        settings_m = mb.addMenu("&Settings")
         view_m = mb.addMenu("&View")
         help_m = mb.addMenu("&Help")
 
@@ -1222,6 +1230,8 @@ class MainWindow(QMainWindow):
         self.act_choose.triggered.connect(self._browse)
         open_act = file_m.addAction("Open photo folder")
         open_act.triggered.connect(self._open_folder)
+        file_m.addSeparator()
+        settings_m = file_m.addMenu("&Settings")          # File > Settings (filled in below)
         file_m.addSeparator()
         quit_act = file_m.addAction("Quit")
         quit_act.setShortcut(QKeySequence("Ctrl+Q"))
@@ -1273,7 +1283,7 @@ class MainWindow(QMainWindow):
             act.triggered.connect(lambda _=False, v=value: self._set_view_option(attr, v, after))
             self.choice_actions.setdefault(attr, []).append((value, act))
 
-    # View menu choices, and the download options in the left column (Settings > Reset settings to defaults).
+    # View menu choices, and the download options in the left column (File > Settings > Reset settings to defaults).
     VIEW_FIELDS = ("data_unit", "speed_unit", "speed_window", "theme", "show_log")
     OPTION_FIELDS = ("rovers", "excluded_cameras", "check_existing", "sol_from", "sol_to", "workers", "limit_on",
                      "limit_files", "limit_period")
@@ -1379,13 +1389,18 @@ class MainWindow(QMainWindow):
         self.phase.setText("Pausing… finishing current photos")
         self._validate()
 
+    def _limit_value(self) -> int:
+        """The number typed in the download limit box (500 if it's empty or not a number)."""
+        text = self.limit_files.text().strip()
+        return max(1, int(text)) if text.isdigit() else 500
+
     def _make_limiter(self) -> FileLimiter | None:
         """The download limit chosen in Options, or None. The same limiter is reused while its numbers stay the
         same, so pausing and resuming (or starting again) doesn't reset what has already been counted."""
         if not self.limit_box.isChecked():
             self.limiter = None
             return None
-        n, period = self.limit_files.value(), self.limit_period.currentText()
+        n, period = self._limit_value(), self.limit_period.currentText()
         if self.limiter is None or (self.limiter.max_files, self.limiter.period) != (n, PERIODS[period]):
             self.limiter = FileLimiter(n, PERIODS[period], cancelled_error=Cancelled)
             self.limiter.label = f"{n:,} photos per {period}"
@@ -1504,7 +1519,7 @@ class MainWindow(QMainWindow):
         retry_refused = self.act_retry.isChecked()
         if retry_refused:
             self.act_retry.setChecked(False)      # one run only
-            self._log("Retrying photos NASA refused before (Settings > Retry photos NASA refused).")
+            self._log("Retrying photos NASA refused before (File > Settings > Retry photos NASA refused).")
         self.report = Report()
         report = self.report
         self.summary.setVisible(False)
