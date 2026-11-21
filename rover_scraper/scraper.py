@@ -131,7 +131,12 @@ class Scraper:
         report.known_unavailable += len(plan.photos) - len(todo)
         have = Counter()
         if plan.action is Action.FILL:
+            skipped = len(plan.photos) - len(todo)
+            self.log(f"     checking sizes of {len(todo)} photos..."
+                     + (f" ({skipped} skipped: NASA refused them before)" if skipped else ""))
+            checked = len(todo)
             todo = self._drop_by_size(plan.folder, todo, report)
+            self.log(f"     {checked - len(todo)} already on disk, downloading {len(todo)}")
             if todo:
                 # Bytes already in the folder, as a multiset: identical images listed twice are kept twice.
                 have = Counter(self._existing_hashes(plan.folder))
