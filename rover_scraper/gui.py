@@ -1541,6 +1541,13 @@ class MainWindow(QMainWindow):
         theme_options += [(g, sorted(((name, key) for group, name, key, _ in THEMES if group == g),
                                      key=lambda choice: choice[0].casefold())) for g in THEME_GROUPS]
         self._choice_menu(view_m, "Theme", theme_options, "theme", after=self._apply_theme)
+        # Hovering a theme previews it; clicking keeps it; closing the menu otherwise puts the chosen one back.
+        self.theme_previewing: str | None = None
+        self.theme_preview_timer = QTimer(self, singleShot=True, interval=60)   # skip themes passed over quickly
+        self.theme_preview_timer.timeout.connect(self._show_theme_preview)
+        for value, act in self.choice_actions["theme"]:
+            act.hovered.connect(lambda v=value: self._preview_theme(v))
+        view_m.aboutToHide.connect(self._end_theme_preview)
         units_m = view_m.addMenu("Units")
         self._choice_menu(units_m, "Data", [("Auto", "auto"), ("KB", "KB"), ("MB", "MB"), ("GB", "GB"),
                                             ("TB", "TB")], "data_unit")
@@ -1663,8 +1670,24 @@ class MainWindow(QMainWindow):
         if after:
             after()
 
-    def _apply_theme(self) -> None:
-        choice = self.settings.theme
+    def _preview_theme(self, key: str) -> None:
+        self.theme_previewing = key
+        self.theme_preview_timer.start()
+
+    def _show_theme_preview(self) -> None:
+        if self.theme_previewing is not None:
+            self._apply_theme(self.theme_previewing)
+
+    def _end_theme_preview(self) -> None:
+        """The View menu closed. After a click the new theme is already saved; otherwise this restores the saved
+        one. Run once the click (if any) has been handled, since Qt closes the menu before reporting it."""
+        self.theme_preview_timer.stop()
+        if self.theme_previewing is not None:
+            self.theme_previewing = None
+            QTimer.singleShot(0, self._apply_theme)
+
+    def _apply_theme(self, choice: str | None = None) -> None:
+        choice = choice or self.settings.theme
         if choice in THEME_COLORS:
             apply_theme(self.app, THEME_COLORS[choice])
         else:            # "system", or a theme this version doesn't have
