@@ -8,9 +8,12 @@ downloads nothing to start. Each build goes into a new dated folder, so earlier 
 PyInstaller's scratch files are kept in a temporary folder inside <out> that is removed when the build ends, so
 the build folder holds only the .exe.
 
-Run it with a Python environment that has requirements.txt and PyInstaller installed:
+Run it with Python 3.10 or newer, from the project folder:
 
-  python packaging/build_exe.py --out D:/RoverImageScraper_build
+  python packaging/build_exe.py --out C:/path/to/builds
+
+If that Python doesn't have the app's libraries and PyInstaller, a build environment is set up for it in
+<out>/build-venv the first time (see build_env.py).
 """
 from __future__ import annotations
 
@@ -34,7 +37,7 @@ def build(out: str) -> str:
     from make_icon import write_ico
     with tempfile.TemporaryDirectory(prefix="pyinstaller-work-", dir=out) as work:
         ico = os.path.join(work, "icon.ico")
-        write_ico(ico)                                     # the .exe's own icon (Mars), not PyInstaller's default
+        write_ico(ico)                                     # the .exe's own icon (the rocket), not PyInstaller's default
         args = [sys.executable, "-m", "PyInstaller", os.path.join(SRC, "gui.py"),
                 "--name", NAME, "--onefile", "--windowed", "--noconfirm", "--clean", "--icon", ico,
                 "--paths", SRC,
@@ -54,6 +57,9 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Build RoverImageScraper.exe.")
     p.add_argument("--out", required=True, help="folder for builds; each build gets a new subfolder (~40 MB)")
     args = p.parse_args()
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import build_env
+    build_env.ensure(os.path.abspath(args.out))
     out = os.path.join(os.path.abspath(args.out), time.strftime("build-%Y%m%d-%H%M%S"))
     os.makedirs(out)
     exe = build(out)

@@ -1,10 +1,13 @@
 """Build the desktop app as a Linux AppImage: one file that runs on most Linux distributions without installing.
 
-Like the Windows .exe it carries its own private copy of Python and the libraries. Run it on Linux (x86-64), with
-a Python environment that has requirements.txt and packaging/requirements-build.txt installed, and appimagetool
-(https://github.com/AppImage/appimagetool) on the PATH or given with --appimagetool:
+Like the Windows .exe it carries its own private copy of Python and the libraries. Run it on Linux (x86-64) with
+Python 3.10 or newer, from the project folder, with appimagetool (https://github.com/AppImage/appimagetool) on the
+PATH or given with --appimagetool:
 
-  python packaging/build_appimage.py --out ~/builds
+  python3 packaging/build_appimage.py --out ~/builds
+
+If that Python doesn't have the app's libraries and PyInstaller, a build environment is set up for it in
+<out>/build-venv the first time (see build_env.py).
 
 Each build goes into a new dated folder that ends up holding only the AppImage:
 
@@ -100,6 +103,8 @@ def main() -> int:
     if not sys.platform.startswith("linux"):
         print("An AppImage has to be built on Linux.", file=sys.stderr)
         return 2
+    import build_env
+    build_env.ensure(os.path.abspath(os.path.expanduser(args.out)))
     out = os.path.join(os.path.abspath(os.path.expanduser(args.out)), time.strftime("build-%Y%m%d-%H%M%S"))
     os.makedirs(out)
     target = build(out, args.appimagetool)
