@@ -375,7 +375,9 @@ def _check_icon(dark: bool = False) -> str:
     return os.path.join(here, "check_dark.svg" if dark else "check.svg").replace("\\", "/")
 
 
-def apply_theme(app: QApplication, t: dict) -> None:
+def apply_theme(app: QApplication, t: dict, only=None) -> None:
+    """Style the whole app with theme t, or only one widget and its children (only=widget, for previews)."""
+    target = only if only is not None else app
     pal = QPalette()
     for role, key in ((QPalette.ColorRole.Window, "bg"), (QPalette.ColorRole.Base, "input"),
                       (QPalette.ColorRole.AlternateBase, "card"), (QPalette.ColorRole.Text, "text"),
@@ -389,8 +391,8 @@ def apply_theme(app: QApplication, t: dict) -> None:
     pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(t["muted"]))
     pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor(t["muted"]))
     pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(t["muted"]))
-    app.setPalette(pal)
-    app.setStyleSheet(f"""
+    target.setPalette(pal)
+    target.setStyleSheet(f"""
         QWidget {{ font-family: "Segoe UI"; font-size: 10pt; }}
         QMainWindow, QWidget#root {{ background: {t['bg']}; }}
         QMenuBar {{ background: {t['card']}; padding: 2px 8px; }}
@@ -1538,7 +1540,7 @@ class MainWindow(QMainWindow):
         self._choice_menu(view_m, "Theme", theme_options, "theme", after=self._apply_theme)
         # Hovering a theme previews it; clicking keeps it; closing the menu otherwise puts the chosen one back.
         self.theme_previewing: str | None = None
-        self.theme_preview_timer = QTimer(self, singleShot=True, interval=60)   # skip themes passed over quickly
+        self.theme_preview_timer = QTimer(self, singleShot=True, interval=90)   # skip themes passed over quickly
         self.theme_preview_timer.timeout.connect(self._show_theme_preview)
         for value, act in self.choice_actions["theme"]:
             act.hovered.connect(lambda v=value: self._preview_theme(v))
@@ -1670,8 +1672,12 @@ class MainWindow(QMainWindow):
         self.theme_preview_timer.start()
 
     def _show_theme_preview(self) -> None:
-        if self.theme_previewing is not None:
-            self._apply_theme(self.theme_previewing)
+        """Restyle only the window's contents, not the open menus: restyling a menu while the mouse is on it
+        makes it redraw and shift."""
+        key = self.theme_previewing
+        if key is not None:
+            colors = THEME_COLORS.get(key) or (DARK if system_is_dark(self.app) else LIGHT)
+            apply_theme(self.app, colors, only=self.centralWidget())
 
     def _end_theme_preview(self) -> None:
         """The View menu closed. After a click the new theme is already saved; otherwise this restores the saved
@@ -1682,6 +1688,10 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._apply_theme)
 
     def _apply_theme(self, choice: str | None = None) -> None:
+        central = self.centralWidget() if hasattr(self, "theme_previewing") else None
+        if central is not None and central.styleSheet():       # a preview was showing: back to the app's theme
+            central.setStyleSheet("")
+            central.setPalette(QPalette())
         choice = choice or self.settings.theme
         if choice in THEME_COLORS:
             apply_theme(self.app, THEME_COLORS[choice])
