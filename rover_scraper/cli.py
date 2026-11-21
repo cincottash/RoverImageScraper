@@ -93,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     if len(report.problems) > 50:
         print(f"  ... {len(report.problems) - 50} more (see --report)")
     if args.report:
+        os.makedirs(os.path.dirname(os.path.abspath(args.report)), exist_ok=True)
         with open(args.report, "w", encoding="utf-8") as f:
             json.dump({"sols_checked": report.sols_checked, "sols_skipped_quick": report.sols_skipped_quick,
                        "sols_skipped_counts": report.sols_skipped_counts,
