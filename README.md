@@ -99,5 +99,3 @@ The destination folder must already exist.
 - `rover_scraper/plan.py`: decides what's missing.
 - `rover_scraper/scraper.py`: runs downloads.
 - `rover_scraper/cli.py`: the command line.
-- `tools/`: read-only scripts used to check the output against an existing photo folder (comparison by hash,
-  rehearsal checks, dry-run summary).
