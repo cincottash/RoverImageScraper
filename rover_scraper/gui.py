@@ -644,6 +644,12 @@ class MainWindow(QMainWindow):
             right.addWidget(c)
         self.activity_card = self._build_activity_card()
         right.addWidget(self.activity_card, 1)
+        # Shown only while the activity log is hidden, where the log was: bottom right, just above Start.
+        self.log_show_btn = link_button("Show activity ▴")
+        self.log_show_btn.setToolTip("Show the activity log again (also under View > Show activity log)")
+        self.log_show_btn.clicked.connect(lambda: self._set_log_visible(True))
+        self.log_show_btn.setVisible(False)
+        right.addWidget(self.log_show_btn, 0, Qt.AlignmentFlag.AlignRight)
 
         bottom = QFrame()
         bottom.setObjectName("bottomBar")
@@ -653,12 +659,6 @@ class MainWindow(QMainWindow):
         self.preview_btn.setToolTip("Estimate what a download would add, without downloading anything")
         self.preview_btn.clicked.connect(self._preview)
         bl.addWidget(self.preview_btn)
-        # Shown only while the activity log is hidden, to bring it back.
-        self.log_show_btn = link_button("Show activity ▴")
-        self.log_show_btn.setToolTip("Show the activity log again (also under View > Show activity log)")
-        self.log_show_btn.clicked.connect(lambda: self._set_log_visible(True))
-        self.log_show_btn.setVisible(False)
-        bl.addWidget(self.log_show_btn)
         bl.addStretch()
         self.start_hint = label("", "muted")             # why Start is greyed out, when it is
         self.start_hint.setProperty("tone", "warn")

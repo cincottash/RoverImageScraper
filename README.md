@@ -115,7 +115,8 @@ What the window offers:
   Below it, *NASA archive* shows how many requests went to NASA's PDS archive this session (Spirit and
   Opportunity). That archive needs no key and has no request limit, so it's a count, not a meter.
 - **Activity:** the same log the command line prints. *Hide* removes it from the window and gives the space to
-  the cards above; *Show activity* in the bottom bar (or *View > Show activity log*) brings it back.
+  the cards above; *Show activity* at the bottom right, above Start (or *View > Show activity log*), brings it
+  back.
 - **Menus:**
   - *File*: choose or open the photo folder, *Settings*, quit.
   - *File > Settings*: retry photos NASA refused on the next run, open the app data folder, change where it is,
