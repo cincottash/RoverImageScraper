@@ -4,135 +4,177 @@ Downloads the raw photos taken by NASA's four Mars rovers (**Curiosity**, **Pers
 **Opportunity**) into a tidy folder on your computer. Run it again later and it fetches only what's new or still
 missing, so it can keep a growing collection up to date.
 
-![The Rover Image Scraper desktop app in its default dark theme, after downloading a few sols of Perseverance and Spirit](.github/screenshot.png)
+![The Rover Image Scraper window in its default dark theme, after a download: the photo folder, API key, rovers and options on the left; library status, progress, Mars Vista usage and the activity log on the right](.github/screenshot.png)
 
 It's free and open source (see [License](#license)).
 
-## Where the photos come from
-
-- **Curiosity and Perseverance** (both still exploring Mars): the free
+- **Curiosity and Perseverance** (both still exploring Mars) come from the free
   [Mars Vista API](https://github.com/james-langridge/mars-vista-api), which lists every raw photo NASA has
-  published for them. The photos themselves download straight from NASA's image servers. Mars Vista needs a free
-  API key (see [Getting an API key](#getting-an-api-key)).
-- **Spirit and Opportunity** (missions ended in 2010 and 2018): NASA's
+  published for them and needs a free API key. The photos themselves download straight from NASA's image servers.
+- **Spirit and Opportunity** (missions ended in 2010 and 2018) come from NASA's
   [Planetary Data System (PDS) Imaging Node](https://pds-imaging.jpl.nasa.gov/), NASA's permanent archive of
-  mission data. No key is needed for these two.
+  mission data. No key is needed.
 
 A *sol* is a day on Mars, counted from the day the rover landed. Photos are organised by rover, sol and camera.
 
 ## Download and run
 
-The easiest way is the ready-made app from the
-[latest release](https://github.com/cincottash/RoverImageScraper/releases/latest). It needs no Python and installs
-nothing.
+Get the app from the [latest release](https://github.com/cincottash/RoverImageScraper/releases/latest). It needs
+no Python and installs nothing.
 
-- **Windows:** download **RoverImageScraper.exe** and double-click it. Windows may show *"Windows protected your
-  PC"* the first time, because the program isn't code-signed: click *More info*, then *Run anyway*.
-- **Linux:** download **RoverImageScraper-x86_64.AppImage**, make it executable, and run it:
-  ```sh
-  chmod +x RoverImageScraper-x86_64.AppImage
-  ./RoverImageScraper-x86_64.AppImage
-  ```
-  (Or right-click it, tick *Allow executing file as program* in *Properties*, and double-click.)
-- **macOS:** run it from the source code (see [Running from the source code](#running-from-the-source-code)).
+- **Windows:** download **RoverImageScraper.exe** and double-click it. If Windows shows *"Windows protected your
+  PC"* (the program isn't code-signed), click *More info*, then *Run anyway*.
+- **Linux:** download **RoverImageScraper-x86_64.AppImage**, then `chmod +x RoverImageScraper-x86_64.AppImage`
+  and run it (or tick *Allow executing file as program* in its *Properties* and double-click it).
+- **macOS:** run it from the source code (see *Running from the source code* below).
 
-More about the two app files: [Standalone app](#standalone-app).
+## First run
 
-## Getting an API key
+<img align="right" width="380" src=".github/readme/setup.png" alt="The first-run window: App Data Folder, Don't Keep App Data, and an optional Photo Folder">
 
-Curiosity and Perseverance need a free Mars Vista API key. Sign up with an email address at
-[marsvista.dev](https://marsvista.dev), then paste the key into the app's *API key* box. The app keeps it in your
-system's secure credential store (Windows Credential Manager, the macOS Keychain, or your Linux desktop's
-keyring), not in a file. Keep the key private: anyone with it can use your Mars Vista quota.
+The app asks where to keep its own small files (the *app data folder*: settings, scan results and request counts)
+and, optionally, where to save photos. Each can be on any drive.
 
-## Using the desktop app
+Then get a free Mars Vista API key at [marsvista.dev](https://marsvista.dev) and paste it into *API Key*. The app
+keeps it in your system's credential store (Windows Credential Manager, the macOS Keychain or your Linux keyring),
+not in a file. Keep it private: anyone with it can use your Mars Vista quota.
 
-**First run:** the app asks where to keep its own files (the *app data folder*: settings, scan results and a few
-counters, a few megabytes) and, optionally, where to save photos. Each can be on any drive. See
-[The app data folder](#the-app-data-folder).
+<br clear="right">
 
-Then:
+## Using it
 
-1. Choose a **photo folder** and paste your **API key**. If the folder doesn't exist yet, the app offers to
-   create it.
-2. Tick the **rovers** you want. Open *Cameras* under a rover to leave out cameras you don't want.
-3. Click **Quick scan** to see what's already in the folder and how much is available online.
-4. Optionally click **Preview** for an estimate of how many photos and gigabytes a download would add, and where
-   they'll go (with the free space on that drive).
-5. Click **Start**. If Start is greyed out, the line next to it says what's missing.
+1. Choose a **photo folder** and paste your **API key**.
+2. Tick the **rovers** you want.
+3. Click **Quick Scan** to see what's in the folder and what's online.
+4. Optionally click **Preview** for an estimate.
+5. Click **Start**. If Start is greyed out, the line beside it says what's missing.
 
-### The window
+### Rovers and cameras
 
-- **Options**
-  - **Check existing sols for missing photos:** when ticked, the run goes through every sol, filling in anything
-    missing from sols you already have (slower). Untick it to download only sols newer than the newest one in your
-    folder.
-  - **Sols from / to:** limit the run to a range of sols. Leave both blank for everything.
-  - **Limit downloads to N photos per minute, hour or day:** an optional cap, for example to go easy on a shared
-    connection. With 500 per hour, no 60-minute stretch has more than 500 photo downloads; when the cap is
-    reached an amber banner shows when downloading resumes, and it carries on by itself. Typing a number or
-    choosing a period turns the limit on; untick the box to turn it off.
-  - **Advanced > Parallel downloads:** how many photos download at once (1–16, default 6).
-- **Library status:** for each rover, what's in your folder (sols, photos, size) and what's available online (the
-  latest sol, and how many sols and photos you don't have yet). For Spirit and Opportunity the number of photos
-  isn't known until each sol is looked at, so only sols are shown. *Full check* also looks for gaps inside sols you
-  already have; it makes about one Mars Vista request per sol, so it asks first. If you've downloaded since the
-  last scan, a note says the numbers are out of date until you scan again.
-- **Progress:**
-  - *Photos downloaded* and *Data downloaded* in this run.
-  - *Already had*: photos that were already in your folder (in sols that were already complete, or found while
-    filling in a sol).
-  - *Unavailable at NASA*: photos NASA's image servers refuse to send (HTTP 403 or 404), usually older images
-    NASA no longer serves. They can't be downloaded, so the app remembers them and skips them on later runs
-    instead of counting them as missing. *Download > Retry photos NASA refused* tries them all again.
-  - *Speed*, *Photo rate* and *Average speed*, *Errors*, *Elapsed*, and *Time left*: an estimate based on how
-    fast sols went by over the last two minutes. It can change noticeably when the run moves from sols you
-    already have (fast) to new ones (slower, since they're downloaded).
-- **Mars Vista API usage:** requests used this hour and today, counted by the app (Mars Vista allows 10,000 per
-  hour and 100,000 per day). Near a limit, an amber banner shows a countdown and the download carries on by
-  itself afterwards. *NASA archive* counts requests for Spirit and Opportunity, which have no limit.
-- **Activity:** a running log of what the app is doing. *View > Detailed activity log* adds a line for every sol
-  checked and every photo saved or skipped.
+<img align="right" width="300" src=".github/readme/rovers.png" alt="The Rovers card, with Perseverance's cameras open and three of them unticked">
 
-Every card has a *Hide* link in its title bar that folds it down to just that bar (*Show* opens it again), so you
-can keep only what you use on screen. The app remembers which cards are folded; *View > Reset view options* opens
-them all again.
+Tick a rover to include it. *Cameras* opens its list of cameras, so you can leave out the ones you don't want.
+Unticking a rover unticks its cameras; ticking it again brings back the cameras you had.
 
-### Pausing, stopping and changing settings
+<br clear="right">
 
-- **Pause** finishes the photos in progress and remembers where it was while the app stays open. **Resume**
-  carries on from that sol without re-checking the ones before it.
-- **Stop** (or closing the app) ends the run. Finished photos are always kept, and the next Start begins from the
-  beginning, skipping complete sols quickly.
-- **During a download** you can change *Parallel downloads* and the *download limit*; they take effect right away
-  (parallel downloads from the next camera folder). Rovers, cameras and the sol range are locked while
-  downloading. If you change them while paused, Resume asks whether to carry on with the original choices or
-  start a new download with the new ones.
+### Options
 
-### Menus
+<img align="right" width="300" src=".github/readme/options.png" alt="The Options card: Check Existing Sols for Missing Photos, a sol range, Limit Downloads to 500 photos per hour, and Parallel Downloads">
 
-- **File:** choose or open the photo folder; **Settings** (move the app data folder, reset the download settings
-  to their defaults); quit.
-- **Download:** Start, Pause and Stop, Quick scan, Full check and Preview (the same as the buttons), and *Retry
-  photos NASA refused* on the next run.
-- **View:** the theme, units for data and speed and how long *Speed* is averaged over, show or hide the activity
-  log, the detailed activity log, and *Reset view options*.
-- **Help:** the Mars Vista website, open the app data folder, report a problem (opens the project's GitHub
-  issues), and *About*.
+- **Check Existing Sols for Missing Photos:** also fill in gaps in sols you already have (slower). Untick it to
+  download only sols newer than your newest.
+- **Sols:** a range of sols. Leave both boxes blank for all.
+- **Limit Downloads:** at most this many photos per minute, hour or day. When the limit is reached, the download
+  waits and carries on by itself.
+- **Advanced > Parallel Downloads:** photos downloaded at once (1–16, default 6).
+
+<br clear="right">
+
+### Library status
+
+![The Library Status card: sols, photos and size on disk for Curiosity, Perseverance and Spirit, and the latest sol, what's left to download and gaps found online](.github/readme/library.png)
+
+What's in your folder and what's online, for each rover. *Quick Scan* counts both. *Full Check* also finds gaps
+inside the sols you have; it uses about one Mars Vista request per sol, so it asks first.
+
+### Progress and API usage
+
+![The Progress card after a finished download](.github/readme/progress.png)
+
+![The Mars Vista API Usage card: requests this hour and today, and NASA archive requests](.github/readme/usage.png)
+
+*Unavailable at NASA* counts photos NASA's servers won't send; they're remembered and skipped on later runs.
+Mars Vista allows 10,000 requests an hour and 100,000 a day. Near a limit, an amber banner shows when the run
+resumes, and it carries on by itself.
+
+### Preview
+
+<img align="right" width="380" src=".github/readme/preview.png" alt="The Preview window: new sols, new photos, gap fills and size for each rover, and the Mars Vista requests needed">
+
+**Preview** estimates what a download would add, where it goes, the free space there, and how many Mars Vista
+requests it needs, without downloading anything. *Start Now* starts it.
+
+<br clear="right">
+
+### Pause, Stop and changing settings
+
+- **Pause** finishes the photos in progress and remembers where it was. **Resume** carries on from that sol.
+- **Stop** (or closing the app) ends the run. Finished photos are always kept.
+- **During a download**, *Parallel Downloads* and *Limit Downloads* can change and apply at once. Rovers,
+  cameras and the sol range are locked until the run ends.
+
+Every card can fold to its title bar with its *Hide* link (*Show* opens it again), and the app remembers which
+are folded.
+
+## Menus
+
+<img src=".github/readme/menu_file.png" alt="The File menu with its Settings submenu"> <img src=".github/readme/menu_download.png" alt="The Download menu">
+
+<img src=".github/readme/menu_help.png" alt="The Help menu">
 
 ### Themes
 
-The app starts in a dark theme. *View > Theme* has 61: *Match operating system* (light or dark, following your
-system), then three groups, each in alphabetical order:
+<img align="right" width="380" src=".github/readme/menu_theme.png" alt="View > Theme: the Space, Dark Themes and Light Themes groups, then Match Operating System, with the Space themes open">
 
-- **Space:** themes made for this app, such as Mars Day, Martian Dusk, Deep Space, Nebula and Cosmic Latte.
-- **Dark themes:** Dark, High Contrast, and dark versions of popular editor color schemes such as Nord, Dracula,
-  Gruvbox, Tokyo Night and Catppuccin.
-- **Light themes:** Light, Paper, Sepia, and light versions of popular editor color schemes such as Solarized
-  Light, One Light and Rosé Pine Dawn.
+*View > Theme* has 61 themes in three groups (**Space**, made for this app; **Dark Themes**; **Light Themes**),
+then **Match Operating System**. The app starts in *Dark*.
 
-Hover over a theme to preview it on the window; click to keep it. Closing the menu without clicking goes back to
-the theme you had.
+Point at a theme to see it on the window; click to keep it. Closing the menu without clicking goes back to the
+theme you had.
+
+<br clear="right">
+
+### Window opacity
+
+![View > Window Opacity: an Opacity slider at 100 %, and Only While Downloading or Scanning](.github/readme/menu_opacity.png)
+
+*View > Window Opacity* makes the window see-through. The window changes as the slider moves (30–100 %). With
+*Only While Downloading or Scanning* ticked, the window stays solid the rest of the time.
+
+<details>
+<summary><b>Every menu item</b></summary>
+
+- **File:** Choose Photo Folder… (Ctrl+O), Open Photo Folder, **Settings** (Change App Data Folder…, Reset
+  Settings to Defaults…), Quit (Ctrl+Q).
+- **Download:** Start, Pause, Stop, Quick Scan, Full Check… and Preview (the same as the buttons), and *Retry
+  Photos Unavailable at NASA (Next Run)*, which tries all photos NASA wouldn't send again on the next run.
+- **View:** Theme, **Units** (Data: Auto, KB, MB, GB or TB; Speed: Auto, KB/s, MB/s or Mbit/s; Speed Averaged
+  Over: 5, 10, 30 or 60 seconds), Show Activity Log, Detailed Activity Log (a line for every sol checked and
+  every photo saved or skipped), Window Opacity, Reset View Options.
+- **Help:** Mars Vista Website, Open App Data Folder, Report a Problem (the project's GitHub issues), About.
+
+*Reset Settings to Defaults* resets rovers, cameras, the sol range, parallel downloads, the download limit and
+the retry option. The photo folder, the API key, the app data folder, scan results and request counts are kept.
+View options have their own reset.
+
+</details>
+
+<details>
+<summary><b>What each number means</b></summary>
+
+- **Library status:** for each rover, what's in your folder (sols, photos, size) and what's available online
+  (the latest sol, and the sols and photos you don't have yet). For Spirit and Opportunity the number of photos
+  isn't known until each sol is looked at, so only sols are shown. Not every sol has photos (for example during
+  solar conjunction, when the Sun blocks communication with Earth), so *To Download* can be fewer than the latest
+  sol. If you've downloaded since the last scan, a note says the numbers are out of date until you scan again.
+- **Photos Downloaded** and **Data Downloaded:** in this run.
+- **Already Had:** photos that were already in your folder (in sols that were already complete, or found while
+  filling in a sol).
+- **Unavailable at NASA:** photos NASA's image servers won't send (HTTP 403 or 404), usually older images NASA
+  no longer serves. They can't be downloaded, so the app remembers them and skips them on later runs instead of
+  counting them as missing.
+- **Speed**, **Photo Rate** and **Average Speed**, **Errors**, **Elapsed**, and **Time Left:** an estimate based
+  on how fast sols went by over the last two minutes. It can change noticeably when the run moves from sols you
+  already have (fast) to new ones (slower, since they're downloaded).
+- **Mars Vista API Usage:** requests used this hour and today, counted by the app. *NASA Archive* counts requests
+  for Spirit and Opportunity, which have no limit.
+- **Limit Downloads:** with 500 per hour, no 60-minute stretch has more than 500 photo downloads. Typing a number
+  or choosing a period turns the limit on; untick the box to turn it off.
+- **Paused, then changed:** if you change rovers, cameras or the sol range while paused, Resume asks whether to
+  carry on with the original choices or start a new download with the new ones.
+
+</details>
 
 ## Where your photos go
 
@@ -151,17 +193,20 @@ the theme you had.
     ...
 ```
 
-The layout is `<photo folder>/<Rover>/<sol>/<CAMERA>/<n>.<type>`. Within each camera folder, photos are numbered
-0, 1, 2… in the order the source lists them. The extension (almost always `.jpg`) comes from the file's own
-contents, never guessed from its name or web address, so your file manager can show previews. Only real photos
-(JPEG, PNG, GIF or TIFF) are saved: if a server sends something else in place of a photo, such as a
-"502 Bad Gateway" error page, it's tried again a few times and then counted as an error and listed under *Show
-problems*. It's not saved, so the next run sees the photo as missing and downloads it. Files named just `<n>`, as
-older versions saved them, count toward a folder's total too, and the app never renames them.
+The app never overwrites, renames or deletes files in your photo folder. It only adds new ones.
 
-## How it decides what to download
+<details>
+<summary><b>How it decides what to download</b></summary>
 
-- It never overwrites, renames or deletes files in your photo folder. It only adds new ones.
+- The layout is `<photo folder>/<Rover>/<sol>/<CAMERA>/<n>.<type>`. Within each camera folder, photos are
+  numbered 0, 1, 2… in the order the source lists them.
+- The extension (almost always `.jpg`) comes from the file's own contents, never guessed from its name or web
+  address, so your file manager can show previews. Only real photos (JPEG, PNG, GIF or TIFF) are saved: if a
+  server sends something else in place of a photo, such as a "502 Bad Gateway" error page, it's tried again a few
+  times and then counted as an error and listed under *Show Problems*. It's not saved, so the next run sees the
+  photo as missing and downloads it.
+- Files named just `<n>`, as older versions saved them, count toward a folder's total too, and the app never
+  renames them.
 - For each sol it compares the number of photos on disk with the number the source lists, camera by camera.
   Sols that match are skipped quickly. A camera folder with too few photos gets only the ones it's missing,
   numbered after the highest existing file.
@@ -171,10 +216,10 @@ older versions saved them, count toward a folder's total too, and the app never 
 - For Spirit and Opportunity, each sol's photos are read from NASA's archive folders: the full-frame,
   downsampled and sub-frame images (thumbnails and calibration images are left out). Sols without photos are
   answered in a fraction of a second.
-- Photos NASA refuses to serve are remembered in the app data folder (`unavailable.json`), so they aren't counted
-  as missing on every run.
+- Photos NASA won't serve are remembered in the app data folder (`unavailable.json`), so they aren't counted as
+  missing on every run.
 
-### Good to know
+**Good to know**
 
 - **Spirit and Opportunity folders that came from somewhere else are left as they are.** If a Spirit or
   Opportunity camera folder holds photos that weren't downloaded from NASA's archive (for example copies from
@@ -186,30 +231,35 @@ older versions saved them, count toward a folder's total too, and the app never 
   contains extra numbered files from another tool (thumbnails, for example), it can look complete even though a
   photo is missing.
 
-## The app data folder
+</details>
+
+<details>
+<summary><b>The app data folder</b></summary>
 
 The app keeps a few small files of its own (settings, scan results, Mars Vista request counts and the list of
-photos NASA refused) in its *app data folder*, never in your photo folder. You choose it on first run; it can be
-on any drive. The suggested place is `%LOCALAPPDATA%\RoverImageScraper\` on Windows and
+photos unavailable at NASA) in its *app data folder*, never in your photo folder. You choose it on first run; it
+can be on any drive. The suggested place is `%LOCALAPPDATA%\RoverImageScraper\` on Windows and
 `~/.local/share/RoverImageScraper/` on macOS and Linux. Which folder you chose is remembered for your user account
 (in the Windows registry under `HKCU\Software\RoverImageScraper`, or in `~/.config/RoverImageScraper/data_folder`
 on macOS and Linux), and the command line uses the same folder.
 
-To move it later, use *File > Settings > Change app data folder*: the files are copied (the originals are left
+To move it later, use *File > Settings > Change App Data Folder*: the files are copied (the originals are left
 where they were) and the app restarts.
 
-To keep nothing between launches, tick *Don't keep app data* in that window. Settings, scan results and counters
+To keep nothing between launches, tick *Don't Keep App Data* in that window. Settings, scan results and counters
 then live in a temporary folder that's deleted when the app closes, and every launch starts fresh. The
 trade-off: request counts restart at zero each time, so the app can't keep you under Mars Vista's limits across
-restarts, and refused photos are tried again on each run. Downloaded photos are always kept.
+restarts, and photos unavailable at NASA are tried again on each run. Downloaded photos are always kept.
 
-## Command line
+</details>
+
+<details>
+<summary><b>Command line</b></summary>
 
 The same downloads can run from a terminal, which is handy for scheduled updates. It runs from the source code:
-first follow [Running from the source code](#running-from-the-source-code), which creates the `.venv` folder these
-commands use. Commands are run from the project folder; in
-the examples, replace `C:\path\to\MarsPhotos` with your photo folder (on macOS or Linux, a path such as
-`~/MarsPhotos`). The folder must already exist.
+first follow *Running from the source code* below, which creates the `.venv` folder these commands use. Commands
+are run from the project folder; in the examples, replace `C:\path\to\MarsPhotos` with your photo folder (on
+macOS or Linux, a path such as `~/MarsPhotos`). The folder must already exist.
 
 ```bat
 :: First download into an empty folder (everything for all four rovers: well over a million photos and
@@ -241,13 +291,16 @@ On macOS or Linux, use `.venv/bin/python rover_scraper/main.py ...`.
 | `--workers` | Parallel downloads (default 6) |
 | `--verbose` | Also list every sol checked and every photo saved or skipped |
 | `--report <file>` | Save a JSON summary of the run |
-| `--retry-unavailable` | Try again the photos NASA refused on earlier runs |
+| `--retry-unavailable` | Try again the photos NASA wouldn't send on earlier runs |
 
 The command line uses the key saved by the desktop app. Without the app, set it as an environment variable
 instead, then open a new terminal: `setx MARSVISTA_API_KEY your_key_here` on Windows, or
 `export MARSVISTA_API_KEY=your_key_here` in your shell profile on macOS and Linux.
 
-## Running from the source code
+</details>
+
+<details>
+<summary><b>Running from the source code</b></summary>
 
 Needed for the command line, and on macOS. You need **Python 3.10 or newer**
 ([python.org](https://www.python.org/downloads/)) and [Git](https://git-scm.com/downloads). Once, set up a private
@@ -269,7 +322,10 @@ Then start the desktop app from the project folder with:
 On macOS or Linux, use `python3 -m venv .venv`, `.venv/bin/pip` and `.venv/bin/python`. If `py -3` or `python3`
 picks a Python older than 3.10, name the version instead, such as `py -3.12` or `python3.12`.
 
-## Standalone app
+</details>
+
+<details>
+<summary><b>The standalone app, and building it yourself</b></summary>
 
 The desktop app is packaged with [PyInstaller](https://pyinstaller.org) into one file per system, attached to
 each [release](https://github.com/cincottash/RoverImageScraper/releases). Each carries its own private copy of
@@ -284,12 +340,11 @@ the desktop app only; the command line runs from the source code.
   `--appimage-extract-and-run`. The API key is kept in your desktop's keyring (GNOME Keyring or KWallet); without
   one, the key has to be entered each session.
 
-### Building them yourself
-
-You need Python 3.10 or newer and a copy of the project (`git clone`, as above). No other setup is needed: the
-first build sets up its own Python environment with the libraries and PyInstaller, in `build-venv` inside the
-`--out` folder (a minute or two, about 250 MB). Later builds into the same folder reuse it, and update it when the
-requirements change. If the Python you run it with already has them installed, it's used as is.
+**Building them yourself.** You need Python 3.10 or newer and a copy of the project (`git clone`, as above). No
+other setup is needed: the first build sets up its own Python environment with the libraries and PyInstaller, in
+`build-venv` inside the `--out` folder (a minute or two, about 250 MB). Later builds into the same folder reuse it,
+and update it when the requirements change. If the Python you run it with already has them installed, it's used
+as is.
 
 The Windows `.exe`, on Windows, from the project folder:
 
@@ -307,20 +362,21 @@ python3 packaging/build_appimage.py --out ~/builds --appimagetool /path/to/appim
 
 Each build goes into a new dated subfolder of `--out`. The release builds use Python 3.10.
 
-### Automatic builds and releases
-
-`.github/workflows/build-apps.yml` builds both apps on GitHub (the `.exe` on Windows, the AppImage on
-Ubuntu 22.04) and checks that each starts:
+**Automatic builds and releases.** `.github/workflows/build-apps.yml` builds both apps on GitHub (the `.exe` on
+Windows, the AppImage on Ubuntu 22.04) and checks that each starts:
 
 - **Pull requests:** builds are kept for 14 days as downloads on the run's page (*Actions* tab), so changes can
   be tried before merging. Nothing is published.
 - **Every merge into `main`:** the same, then a release is published with both apps, tagged with the next
   version (v1.3.0 → v1.3.1 → v1.3.2, and so on). For a bigger step, put `[minor]` (v1.4.0) or `[major]` (v2.0.0)
-  in the pull request's title.
+  in the pull request's title (or its commit's title).
 - **A version tag pushed by hand** (`git tag v2.0.0` then `git push origin v2.0.0`) publishes exactly that
   version.
 
-## Code layout
+</details>
+
+<details>
+<summary><b>Code layout</b></summary>
 
 All program code is in `rover_scraper/`:
 
@@ -330,12 +386,14 @@ All program code is in `rover_scraper/`:
 - `download.py`: downloads that never overwrite existing files.
 - `scan.py`: Library status (quick scan and full check).
 - `ratelimit.py`: counts Mars Vista requests, and the optional download limit.
-- `state.py`: the app data folder, and the photos NASA refuses to serve. `settings.py`: the app's saved settings.
+- `state.py`: the app data folder, and the photos NASA won't serve. `settings.py`: the app's saved settings.
 - `check.svg` and `check_dark.svg`: the tick drawn in checkboxes (white, or dark on light accent colors).
 
 Packaging: `packaging/build_exe.py` (Windows), `packaging/build_appimage.py` (Linux), `packaging/build_env.py`
 (sets up the build's Python environment when needed), `packaging/make_icon.py` and
 `packaging/icon.svg` (the app icon), and `packaging/requirements-build.txt` (the build tools, pinned).
+
+</details>
 
 ## License
 
@@ -349,7 +407,7 @@ It uses [PySide6 / Qt](https://www.qt.io/qt-for-python) (LGPL-3.0), [requests](h
 (Apache-2.0) and [keyring](https://github.com/jaraco/keyring) (MIT). The photos themselves are NASA's (image
 credit: NASA/JPL-Caltech).
 
-Many of the *Dark themes* and *Light themes* are based on the colors of these open-source color schemes, by their
+Many of the *Dark Themes* and *Light Themes* are based on the colors of these open-source color schemes, by their
 authors (adjusted slightly so every theme looks distinct): Nord, Dracula, Solarized, Gruvbox, One Dark / One Light,
 Tokyo Night, Catppuccin, Rosé Pine, Everforest, Kanagawa, Ayu, Palenight, Night Owl, Cobalt2, Synthwave '84,
 Tomorrow, Monokai and Zenburn.
