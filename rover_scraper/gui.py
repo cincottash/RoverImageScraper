@@ -19,7 +19,7 @@ import threading
 import time
 import traceback
 
-from PySide6.QtCore import QEvent, QProcess, Qt, QTimer, QUrl
+from PySide6.QtCore import QEvent, QObject, QProcess, Qt, QTimer, QUrl
 from PySide6.QtGui import (QActionGroup, QColor, QDesktopServices, QFont, QIcon, QIntValidator, QKeySequence,
                            QPalette)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QGridLayout,
@@ -778,6 +778,36 @@ class SetupDialog(QDialog):
 
 # ---- main window -----------------------------------------------------------------------------------------
 
+def is_popup(w) -> bool:
+    """A menu or a dropdown list's popup: windows of their own, so the main window's opacity doesn't reach them."""
+    return isinstance(w, QMenu) or w.inherits("QComboBoxPrivateContainer")
+
+
+class PopupOpacity(QObject):
+    """Gives every menu and dropdown list the window's opacity as it opens."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.level = 1.0
+
+    @classmethod
+    def for_app(cls, app: QApplication) -> "PopupOpacity":
+        """One filter per app, shared by every main window (a second filter would undo the first's level)."""
+        existing = app.findChild(cls, "popupOpacity")
+        if existing is not None:
+            return existing
+        f = cls(app)
+        f.setObjectName("popupOpacity")
+        app.installEventFilter(f)
+        return f
+
+    def eventFilter(self, obj, event) -> bool:
+        if event.type() == QEvent.Type.Show and isinstance(obj, QWidget) and obj.isWindow() and is_popup(obj):
+            if abs(obj.windowOpacity() - self.level) > 0.005:
+                obj.setWindowOpacity(self.level)
+        return False
+
+
 class MainWindow(QMainWindow):
     POLL_MS = 200
 
@@ -822,6 +852,7 @@ class MainWindow(QMainWindow):
         self.resize(min(1200, avail.width() - 40) if avail else 1200,
                     min(1000, avail.height() - 60) if avail else 900)
         self._build()
+        self.popup_opacity = PopupOpacity.for_app(app)
         self._build_menus()
         self._load_settings_into_widgets()
         self._refresh_library()
@@ -1740,10 +1771,13 @@ class MainWindow(QMainWindow):
         self._save_settings()
 
     def _apply_opacity(self) -> None:
-        """The window's opacity from View > Window Opacity."""
+        """The window's opacity from View > Window Opacity, also on the menus and dropdown lists that are open
+        (each is a separate window; ones opened later get it from PopupOpacity)."""
         level = self.settings.window_opacity / 100
-        if abs(self.windowOpacity() - level) > 0.005:
-            self.setWindowOpacity(level)
+        self.popup_opacity.level = level
+        for w in [self] + [p for p in QApplication.topLevelWidgets() if p.isVisible() and is_popup(p)]:
+            if abs(w.windowOpacity() - level) > 0.005:
+                w.setWindowOpacity(level)
 
     def _theme_menu_hovered(self, act, theme_acts: list) -> None:
         """The pointer is on something in View > Theme that isn't a theme (a group's name): show the saved theme
