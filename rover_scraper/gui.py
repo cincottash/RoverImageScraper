@@ -22,12 +22,15 @@ import traceback
 from PySide6.QtCore import QEvent, QObject, QProcess, Qt, QTimer, QUrl
 from PySide6.QtGui import (QActionGroup, QColor, QDesktopServices, QFont, QIcon, QIntValidator, QKeySequence,
                            QPalette)
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QGridLayout,
                                QComboBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
                                QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSlider,
-                               QToolButton, QVBoxLayout, QWidget, QWidgetAction)
+                               QStackedWidget, QToolButton, QVBoxLayout, QWidget, QWidgetAction)
 
 from api import SUPPORTED_ROVERS, ApiError, Cancelled, MarsVistaClient, load_api_key, save_api_key
+from photo_library import camera_name
+from photo_page import PhotosPage
 from pds import PdsClient, RequestCounter, RoverSources, is_pds_rover, latest_sol
 from download import NASA_STATUS
 from plan import last_sol_on_disk
@@ -55,6 +58,7 @@ def use_state_dir(path: str) -> None:
 use_state_dir(default_state_dir())
 
 AVG_PHOTO_MB = 0.2          # observed average across Curiosity and Perseverance downloads
+LATEST_THUMB = 96           # pixels: the Latest Photo thumbnail in the Progress card
 # Where keyring keeps the API key on this system, for the window's wording.
 KEY_STORE = ("Windows Credential Manager" if os.name == "nt" else
              "the macOS Keychain" if sys.platform == "darwin" else "your system's keyring")
@@ -461,6 +465,19 @@ def apply_theme(app: QApplication, t: dict, only=None) -> None:
                                        image: url({_check_icon(_is_light(t['accent_text']))}); }}
         QCheckBox::indicator:disabled {{ background: {t['track']}; border-color: {t['border']}; }}
         QCheckBox::indicator:checked:disabled {{ background: {t['muted']}; border-color: {t['muted']}; }}
+        QPushButton#pageTab {{ background: transparent; border: 1px solid transparent; border-radius: 6px;
+                              padding: 5px 16px; color: {t['muted']}; font-weight: 600; }}
+        QPushButton#pageTab:hover {{ color: {t['text']}; background: {t['track']}; }}
+        QPushButton#pageTab:checked {{ background: {t['accent']}; color: {t['accent_text']}; }}
+        QTreeWidget#solTree, QListView#photoGrid {{ background: {t['input']}; border: 1px solid {t['border']};
+                                                    border-radius: 6px; }}
+        QTreeWidget#solTree::item {{ padding: 2px 0; }}
+        QTreeWidget#solTree::item:hover {{ background: {t['track']}; }}
+        QTreeWidget#solTree::item:selected {{ background: {t['accent']}; color: {t['accent_text']}; }}
+        QHeaderView::section {{ background: {t['card']}; color: {t['muted']}; border: none;
+                               border-bottom: 1px solid {t['border']}; padding: 4px 6px; }}
+        QFrame#card QLabel#photoPreview, QFrame#card QLabel#latestThumb {{ background: {t['input']};
+                               border: 1px solid {t['border']}; border-radius: 6px; color: {t['muted']}; }}
     """)
 
 
@@ -901,16 +918,36 @@ class MainWindow(QMainWindow):
         hl = QHBoxLayout(header)
         hl.setContentsMargins(20, 12, 20, 12)
         hl.addWidget(label("Rover Image Scraper", "appTitle"))
+        hl.addSpacing(24)
+        # The two pages: downloading, and looking through the photos
+        self.page_buttons: dict[str, QPushButton] = {}
+        for name, tip in (("Download", "Download photos and check the folder (Ctrl+1)"),
+                          ("Photos", "Look through the downloaded photos (Ctrl+2)")):
+            b = QPushButton(name)
+            b.setObjectName("pageTab")
+            b.setCheckable(True)
+            b.setToolTip(tip)
+            b.clicked.connect(lambda _=False, n=name: self._show_page(n))
+            self.page_buttons[name] = b
+            hl.addWidget(b)
         hl.addStretch()
         self.pill = label("● Mars Vista: not connected", "pill")
         self.pill.setProperty("tone", "idle")
         hl.addWidget(self.pill)
         outer.addWidget(header)
 
-        body = QHBoxLayout()
+        self.pages = QStackedWidget()
+        download_page = QWidget()
+        body = QHBoxLayout(download_page)
         body.setContentsMargins(16, 16, 16, 16)
         body.setSpacing(16)
-        outer.addLayout(body, 1)
+        self.pages.addWidget(download_page)
+        self.download_page = download_page
+        self.photos_page = PhotosPage(self.settings, self._folder, self._save_settings)
+        self.pages.addWidget(self.photos_page)
+        self.pages.setCurrentWidget(download_page)          # a stacked widget shows its first page otherwise
+        self.page_buttons["Download"].setChecked(True)
+        outer.addWidget(self.pages, 1)
 
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
@@ -962,6 +999,11 @@ class MainWindow(QMainWindow):
         self.preview_btn.setToolTip("Estimate what a download would add, without downloading anything")
         self.preview_btn.clicked.connect(self._preview)
         bl.addWidget(self.preview_btn)
+        # On the Photos page: what the download or scan is doing, since the Progress card isn't in view
+        self.page_status = label("", "muted")
+        self.page_status.setVisible(False)
+        bl.addSpacing(12)
+        bl.addWidget(self.page_status)
         bl.addStretch()
         self.start_hint = label("", "muted")             # why Start is greyed out, when it is
         self.start_hint.setProperty("tone", "warn")
@@ -1249,6 +1291,37 @@ class MainWindow(QMainWindow):
         self.problems_btn.clicked.connect(self._show_problems)
         srow.addWidget(self.problems_btn)
         lay.addLayout(srow)
+        # The photo saved most recently; a click shows it on the Photos page
+        self.latest_row = QWidget()
+        lr = QHBoxLayout(self.latest_row)
+        lr.setContentsMargins(0, 4, 0, 0)
+        lr.setSpacing(12)
+        self.latest_thumb = QLabel()
+        self.latest_thumb.setObjectName("latestThumb")
+        self.latest_thumb.setFixedSize(LATEST_THUMB, LATEST_THUMB)
+        self.latest_thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.latest_thumb.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.latest_thumb.setToolTip("Show this photo on the Photos page")
+        self.latest_thumb.mousePressEvent = lambda _e: self._show_latest_photo()
+        lr.addWidget(self.latest_thumb)
+        texts = QVBoxLayout()
+        texts.setSpacing(2)
+        texts.addWidget(label("Latest Photo", "rowHead"))
+        self.latest_text = label("", "value", wrap=True)
+        texts.addWidget(self.latest_text)
+        self.latest_link = link_button("Show on Photos Page")
+        self.latest_link.clicked.connect(self._show_latest_photo)
+        texts.addWidget(self.latest_link, 0, Qt.AlignmentFlag.AlignLeft)
+        texts.addStretch(1)
+        lr.addLayout(texts, 1)
+        self.latest_row.setVisible(False)
+        lay.addWidget(self.latest_row)
+        self.latest_photo = None                  # the newest PhotoFile saved, and the one shown
+        self.latest_shown = None
+        self.latest_timer = QTimer(self, interval=700)       # at most a few thumbnail loads a second
+        self.latest_timer.timeout.connect(self._update_latest_photo)
+        self.latest_timer.start()
+        self.photos_page.loader.ready.connect(self._latest_ready)
         return frame
 
     def _build_usage_card(self) -> QFrame:
@@ -1554,6 +1627,8 @@ class MainWindow(QMainWindow):
     def _folder_changed(self) -> None:
         self._validate()
         self._refresh_library()
+        if self.pages.currentWidget() is self.photos_page:
+            self.photos_page.refresh()
 
     def _key_edited(self) -> None:
         if self._key():
@@ -1675,6 +1750,19 @@ class MainWindow(QMainWindow):
         self.act_retry.setToolTip("Photos NASA's servers won't send (HTTP 403/404) are normally skipped on later "
                                   "runs. Tick this to try them all again on the next run.")
 
+        # The two pages, also in the header
+        page_group = QActionGroup(view_m)
+        self.page_actions: dict[str, object] = {}
+        for name, keys in (("Download", "Ctrl+1"), ("Photos", "Ctrl+2")):
+            act = view_m.addAction(f"{name} Page")
+            act.setCheckable(True)
+            act.setShortcut(QKeySequence(keys))
+            act.setChecked(name == "Download")
+            act.triggered.connect(lambda _=False, n=name: self._show_page(n))
+            page_group.addAction(act)
+            self.page_actions[name] = act
+        view_m.addSeparator()
+
         # The groups first (the entries that open a list), each sorted alphabetically, then Match Operating System
         theme_options = [(g, sorted(((name, key) for group, name, key, _ in THEMES if group == g),
                                     key=lambda choice: choice[0].casefold())) for g in THEME_GROUPS]
@@ -1725,6 +1813,63 @@ class MainWindow(QMainWindow):
         help_m.addSeparator()
         about = help_m.addAction("About Rover Image Scraper")
         about.triggered.connect(self._about)
+
+    # ---- pages ---------------------------------------------------------------------------------------------
+
+    def _show_page(self, name: str) -> None:
+        page = self.photos_page if name == "Photos" else self.download_page
+        self.pages.setCurrentWidget(page)
+        for n, b in self.page_buttons.items():
+            b.setChecked(n == name)
+        for n, act in self.page_actions.items():
+            act.setChecked(n == name)
+        self._update_page_status()
+        if name == "Photos":
+            self.photos_page.setFocus()
+
+    def _update_page_status(self) -> None:
+        """On the Photos page the bottom bar says what a running task is doing."""
+        on_photos = self.pages.currentWidget() is self.photos_page
+        busy = self.mode != "idle"
+        text = self.phase.text() if busy else ""
+        if busy and self.mode == "download" and self.report is not None:
+            text += f"   ·   {count(self.report.downloaded, 'photo')} downloaded"
+        self.page_status.setVisible(on_photos and bool(text))
+        if self.page_status.text() != text:
+            self.page_status.setText(text)
+
+    def _photo_saved(self, path: str) -> None:
+        p = self.photos_page.photo_saved(path)
+        if p is not None:
+            self.latest_photo = p
+
+    def _update_latest_photo(self) -> None:
+        p = self.latest_photo
+        if p is None or p == self.latest_shown:
+            return
+        self.latest_shown = p
+        self.latest_text.setText(f"{p.rover} · Sol {p.sol} · {camera_name(p.camera)} · {p.name}")
+        self.latest_row.setVisible(True)
+        self.photos_page.loader.request(("latest", p.path), p.path, LATEST_THUMB * 2)
+
+    def _latest_ready(self, key, img) -> None:
+        if not (isinstance(key, tuple) and key[0] == "latest"):
+            return
+        if self.latest_shown is None or self.latest_shown.path != key[1] or img.isNull():
+            return
+        ratio = self.latest_thumb.devicePixelRatioF()
+        pix = QPixmap.fromImage(img).scaled(int(LATEST_THUMB * ratio), int(LATEST_THUMB * ratio),
+                                            Qt.AspectRatioMode.KeepAspectRatio,
+                                            Qt.TransformationMode.SmoothTransformation)
+        pix.setDevicePixelRatio(ratio)
+        self.latest_thumb.setPixmap(pix)
+
+    def _show_latest_photo(self) -> None:
+        if self.latest_shown is None:
+            return
+        self._show_page("Photos")
+        self.photos_page.refresh()
+        self.photos_page.show_photo(self.latest_shown)
 
     def _sync_button_actions(self) -> None:
         """Download menu items follow their buttons (enabled state, and Start/Resume wording)."""
@@ -1811,15 +1956,15 @@ class MainWindow(QMainWindow):
 
     # View menu choices, and the download options in the left column (File > Settings > Reset Settings to Defaults).
     VIEW_FIELDS = ("data_unit", "speed_unit", "speed_window", "theme", "show_log", "collapsed_cards",
-                   "window_opacity")
+                   "window_opacity", "photo_thumb_size")
     OPTION_FIELDS = ("rovers", "excluded_cameras", "check_existing", "sol_from", "sol_to", "workers", "limit_on",
                      "limit_files", "limit_period")
 
     def _reset_view(self) -> None:
         answer = QMessageBox.question(
             self, "Reset View Options?",
-            "Put data and speed units, speed averaging, theme, the activity log, folded cards and window opacity "
-            "back to their defaults?")
+            "Put data and speed units, speed averaging, theme, the activity log, folded cards, window opacity and "
+            "the thumbnail size back to their defaults?")
         if answer != QMessageBox.StandardButton.Yes:
             return
         defaults = Settings()
@@ -1829,6 +1974,7 @@ class MainWindow(QMainWindow):
         self._set_log_visible(self.settings.show_log)
         self._apply_folded_cards()
         self.opacity_slider.setValue(self.settings.window_opacity)     # also updates the value beside it
+        self.photos_page.size_slider.setValue(self.settings.photo_thumb_size)
         self._apply_opacity()
         self._apply_theme()
         self._update_counters()
@@ -2358,6 +2504,7 @@ class MainWindow(QMainWindow):
         if lines:
             self._log("\n".join(lines))
         self._update_live()
+        self._update_page_status()
 
     def _log(self, text: str) -> None:
         self.log_view.appendPlainText(text)
@@ -2399,6 +2546,8 @@ class MainWindow(QMainWindow):
                 self.pos["sol"] = e["sol"]
         elif kind == "camera":
             ps["camera"] = e["camera"]
+        elif kind == "saved":
+            self._photo_saved(e["path"])
         elif kind == "scan_start":
             ps.clear()
             ps.update(scan_rover=e["rover"], full=e["full"])
@@ -2641,6 +2790,7 @@ class MainWindow(QMainWindow):
             self.phase.setText("Estimating…")
 
         self._update_counters()
+        self._update_page_status()
 
     def _update_counters(self) -> None:
         """Counters for the current download, or the last one after it ends (so unit changes still apply)."""
@@ -2757,6 +2907,7 @@ class MainWindow(QMainWindow):
                 self.worker.join(timeout=30)
         self._save_settings()
         self.tracker.save()
+        self.photos_page.shutdown()
         event.accept()
 
 

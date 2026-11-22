@@ -268,7 +268,11 @@ class Scraper:
                     self.detail(f"     {where}: {photo.url.rsplit('/', 1)[-1]} is already here (same bytes)")
                     continue
                 name = f"{index}{file_extension(result)}"
-                save_new_file(os.path.join(plan.folder, name), result)
+                path = os.path.join(plan.folder, name)
+                save_new_file(path, result)
+                # Which photo this file is, for the Photos page and its details
+                self.progress({"event": "saved", "path": path, "rover": plan.rover, "sol": plan.sol,
+                               "camera": plan.camera, "number": index, "photo_id": photo.id, "url": photo.url})
                 self.detail(f"     {where}/{name}: saved {len(result) / 1024:,.0f} KB "
                             f"({photo.url.rsplit('/', 1)[-1]})")
                 index += 1
