@@ -129,7 +129,9 @@ theme you had.
 
 ![View > Window Opacity: an Opacity slider at 100 %](.github/readme/menu_opacity.png)
 
-*View > Window Opacity* makes the window see-through. The window changes as the slider moves (30–100 %).
+*View > Window Opacity* makes the whole app see-through: the window, its menus and dropdown lists, dialogs and
+tooltips. Everything changes as the slider moves (30–100 %). While it's below 100 %, *Browse…* opens the app's own
+folder picker instead of the system's, because the system's can't be see-through.
 
 <details>
 <summary><b>Every menu item</b></summary>

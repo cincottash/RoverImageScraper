@@ -712,7 +712,7 @@ class SetupDialog(QDialog):
 
     def _browse(self, edit: QLineEdit) -> None:
         start = edit.text().strip() or os.path.expanduser("~")
-        folder = QFileDialog.getExistingDirectory(self, "Choose Folder", start)
+        folder = choose_folder(self, "Choose Folder", start)
         if folder:
             edit.setText(os.path.normpath(folder))
 
@@ -778,20 +778,36 @@ class SetupDialog(QDialog):
 
 # ---- main window -----------------------------------------------------------------------------------------
 
-def is_popup(w) -> bool:
-    """A menu or a dropdown list's popup: windows of their own, so the main window's opacity doesn't reach them."""
-    return isinstance(w, QMenu) or w.inherits("QComboBoxPrivateContainer")
+def follows_opacity(w) -> bool:
+    """Every window of the app: the main window, menus, dropdown lists, dialogs, message boxes and tooltips. Each is a
+    window of its own, so the main window's opacity doesn't reach the others by itself."""
+    return isinstance(w, QWidget) and w.isWindow()
+
+
+# Qt's opening animations draw menus, dropdown lists and tooltips solid, ignoring the opacity (a menu opened by a
+# click stayed solid), so they're off while the window is see-through.
+OPENING_EFFECTS = (Qt.UIEffect.UI_AnimateMenu, Qt.UIEffect.UI_FadeMenu, Qt.UIEffect.UI_AnimateCombo,
+                   Qt.UIEffect.UI_AnimateTooltip, Qt.UIEffect.UI_FadeTooltip)
+
+
+def choose_folder(parent, title: str, start: str) -> str:
+    """A folder picker. The system's own picker is drawn by the operating system and can't be see-through, so while
+    View > Window Opacity is below 100 % Qt's picker is used instead, which follows the opacity like every window."""
+    f = QApplication.instance().findChild(PopupOpacity, "popupOpacity")
+    see_through = f is not None and f.level < 0.995
+    options = QFileDialog.Option.ShowDirsOnly | (QFileDialog.Option.DontUseNativeDialog if see_through
+                                                 else QFileDialog.Option(0))
+    return QFileDialog.getExistingDirectory(parent, title, start, options)
 
 
 class PopupOpacity(QObject):
-    """Gives every menu and dropdown list the window's opacity as it opens."""
+    """Gives every window of the app the main window's opacity as it's created and as it opens."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.level = 1.0
-        # The system's own choice of menu animations, to put back when the window is solid again
-        self.effects_default = {e: QApplication.isEffectEnabled(e) for e in
-                                (Qt.UIEffect.UI_AnimateMenu, Qt.UIEffect.UI_FadeMenu, Qt.UIEffect.UI_AnimateCombo)}
+        # The system's own choice of opening animations, to put back when the window is solid again
+        self.effects_default = {e: QApplication.isEffectEnabled(e) for e in OPENING_EFFECTS}
 
     @classmethod
     def for_app(cls, app: QApplication) -> "PopupOpacity":
@@ -805,8 +821,7 @@ class PopupOpacity(QObject):
         return f
 
     def eventFilter(self, obj, event) -> bool:
-        if (event.type() in (QEvent.Type.Polish, QEvent.Type.Show) and isinstance(obj, QWidget) and obj.isWindow()
-                and is_popup(obj)):
+        if event.type() in (QEvent.Type.Polish, QEvent.Type.Show) and follows_opacity(obj):
             if abs(obj.windowOpacity() - self.level) > 0.005:
                 obj.setWindowOpacity(self.level)
         return False
@@ -1528,7 +1543,7 @@ class MainWindow(QMainWindow):
     # ---- actions -----------------------------------------------------------------------------------------
 
     def _browse(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Choose Photo Folder",self._folder() or os.path.expanduser("~"))
+        folder = choose_folder(self, "Choose Photo Folder",self._folder() or os.path.expanduser("~"))
         if folder:
             self.folder_edit.setText(os.path.normpath(folder))
 
@@ -1775,18 +1790,15 @@ class MainWindow(QMainWindow):
         self._save_settings()
 
     def _apply_opacity(self) -> None:
-        """The window's opacity from View > Window Opacity, also on the menus and dropdown lists that are open
-        (each is a separate window; ones opened later get it from PopupOpacity)."""
+        """The opacity from View > Window Opacity, on every window of the app: open or not, so each shows it from the
+        moment it appears (windows created later get it from PopupOpacity)."""
         level = self.settings.window_opacity / 100
         self.popup_opacity.level = level
-        # Every menu, not only open ones: a menu that has its opacity before it first opens shows it from the start.
-        for w in [self] + [p for p in QApplication.topLevelWidgets() if is_popup(p)] + self.findChildren(QMenu):
+        for w in [self] + [p for p in QApplication.topLevelWidgets() if follows_opacity(p)] + self.findChildren(QMenu):
             if abs(w.windowOpacity() - level) > 0.005:
                 w.setWindowOpacity(level)
-        # Qt's opening animation for menus and dropdown lists (used when a menu is opened by a click) draws them
-        # solid, ignoring the opacity, so it's off while the window is see-through.
-        solid = level >= 0.995
-        for effect in (Qt.UIEffect.UI_AnimateMenu, Qt.UIEffect.UI_FadeMenu, Qt.UIEffect.UI_AnimateCombo):
+        solid = level >= 0.995          # opening animations draw solid, so they're off while see-through
+        for effect in OPENING_EFFECTS:
             if QApplication.isEffectEnabled(effect) != (solid and self.popup_opacity.effects_default[effect]):
                 QApplication.setEffectEnabled(effect, solid and self.popup_opacity.effects_default[effect])
 
