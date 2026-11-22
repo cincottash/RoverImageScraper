@@ -188,6 +188,21 @@ class MarsVistaClient:
                          {"rovers": rover.lower(), "group_by": "camera", "sol_min": sol, "sol_max": sol})
         return {g["key"]: int(g["count"]) for g in data["data"]["groups"]}
 
+    def photo_records_for_sol(self, rover: str, sol: int) -> list[dict]:
+        """The complete record of every photo of one sol (v2: time taken, place, pointing, image links), across
+        all pages. The IDs are the same as photos_for_sol's. One request per 100 photos."""
+        records, page = {}, 1
+        while True:
+            data = self._get("/api/v2/photos", {"rovers": rover.lower(), "sol_min": sol, "sol_max": sol,
+                                                "per_page": PAGE_SIZE, "page": page, "field_set": "complete",
+                                                "include": "camera"})
+            for rec in data.get("data") or []:
+                records[int(rec["id"])] = rec
+            pages = int((data.get("pagination") or {}).get("total_pages") or 1)
+            if not data.get("data") or page >= pages:
+                return [records[k] for k in sorted(records)]
+            page += 1
+
     def photos_for_sol(self, rover: str, sol: int) -> list[Photo]:
         """Every photo for one rover and sol, across all pages, deduplicated by ID and sorted by ID.
 

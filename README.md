@@ -2,9 +2,10 @@
 
 Downloads the raw photos taken by NASA's four Mars rovers (**Curiosity**, **Perseverance**, **Spirit** and
 **Opportunity**) into a tidy folder on your computer. Run it again later and it fetches only what's new or still
-missing, so it can keep a growing collection up to date.
+missing, so it can keep a growing collection up to date. Its **Photos** page browses what you've downloaded, with
+when and where each photo was taken.
 
-![The Rover Image Scraper window in its default dark theme, after a download: the photo folder, API key, rovers and options on the left; library status, progress, Mars Vista usage and the activity log on the right](.github/screenshot.png)
+![The Rover Image Scraper window in its default dark theme, after a download: the Download and Photos tabs at the top; the photo folder, API key, rovers and options on the left; library status, progress with the latest photo, Mars Vista usage and the activity log on the right](.github/screenshot.png)
 
 It's free and open source (see [License](#license)).
 
@@ -84,6 +85,8 @@ inside the sols you have; it uses about one Mars Vista request per sol, so it as
 
 ![The Mars Vista API Usage card: requests this hour and today, and NASA archive requests](.github/readme/usage.png)
 
+*Latest Photo* shows the newest photo saved; *Show on Photos Page* opens it there.
+
 *Unavailable at NASA* counts photos NASA's servers won't send; they're remembered and skipped on later runs.
 Mars Vista allows 10,000 requests an hour and 100,000 a day. Near a limit, an amber banner shows when the run
 resumes, and it carries on by itself.
@@ -106,6 +109,44 @@ requests it needs, without downloading anything. *Start Now* starts it.
 
 Every card can fold to its title bar with its *Hide* link (*Show* opens it again), and the app remembers which
 are folded.
+
+## Photos
+
+![The Photos page: sols of Perseverance with their photo counts on the left, the photos of one camera as thumbnails in the middle, and the chosen photo's preview and details on the right: when it was taken, the Mars local time, the site and drive, its position, where the camera pointed, and a link to NASA's page](.github/readme/photos.png)
+
+The **Photos** tab (or *Ctrl+2*) browses the photo folder without a file manager.
+
+- **Browse:** choose a rover, then a sol (with its number of photos), then a camera, or type a sol into *Go To
+  Sol*. While a download runs, *Newest Downloads* lists the photos as they arrive.
+- **Thumbnails:** *Thumbnail Size* makes them bigger or smaller. Arrow keys move between photos.
+- **Details:** the chosen photo's preview, rover, sol, camera, size and file, and the details looked up online
+  (below). *Show in Folder* opens it in your file manager.
+- **Full size:** *View Full Size*, a click on the preview, or a double-click on a thumbnail. The mouse wheel zooms,
+  dragging moves the photo, and a double-click switches between *Fit* and *Actual Size*. *Previous* and *Next*
+  (or the arrow keys) step through the camera's photos; *Esc* goes back.
+
+![A photo at full size, with Previous, Next, Fit and Actual Size above it](.github/readme/photo_full.png)
+
+**When and where each photo was taken** is looked up online the first time you open a sol, for all its photos at
+once, and kept in the app data folder, so it shows instantly after that (also offline). It shows the time taken
+(UTC) and on Mars, the site and drive (the rover's place along its route), the position from the site's starting
+point, where the camera pointed, the filter, and a link to the photo's NASA page. Curiosity and Perseverance use a
+few Mars Vista requests per sol (an API key is needed); Spirit and Opportunity use NASA's archive.
+
+*Download > Get Details for Downloaded Photos…* looks up every sol in the folder ahead of time. It can be stopped
+at any point; the next run carries on from there.
+
+<details>
+<summary><b>How photos are matched to their details</b></summary>
+
+- Photos downloaded by this version are recorded as they're saved, so their details need no matching.
+- Photos already in the folder are matched to NASA's list by their exact file size, never by their order. Photos
+  that match no single NASA photo (for example old thumbnails, or copies from NASA's former image gallery) show
+  details for the sol as a whole, and say so.
+- Downloading more photos into a sol looks it up again the next time it's opened.
+- The details belong to the photo folder: after moving the folder, sols are looked up again.
+
+</details>
 
 ## Menus
 
@@ -138,9 +179,10 @@ folder picker instead of the system's, because the system's can't be see-through
 
 - **File:** Choose Photo Folder… (Ctrl+O), Open Photo Folder, **Settings** (Change App Data Folder…, Reset
   Settings to Defaults…), Quit (Ctrl+Q).
-- **Download:** Start, Pause, Stop, Quick Scan, Full Check… and Preview (the same as the buttons), and *Retry
-  Photos Unavailable at NASA (Next Run)*, which tries all photos NASA wouldn't send again on the next run.
-- **View:** Theme, **Units** (Data: Auto, KB, MB, GB or TB; Speed: Auto, KB/s, MB/s or Mbit/s; Speed Averaged
+- **Download:** Start, Pause, Stop, Quick Scan, Full Check… and Preview (the same as the buttons), *Get Details
+  for Downloaded Photos…* (see [Photos](#photos)), and *Retry Photos Unavailable at NASA (Next Run)*, which tries
+  all photos NASA wouldn't send again on the next run.
+- **View:** Download Page (Ctrl+1), Photos Page (Ctrl+2), Theme, **Units** (Data: Auto, KB, MB, GB or TB; Speed: Auto, KB/s, MB/s or Mbit/s; Speed Averaged
   Over: 5, 10, 30 or 60 seconds), Show Activity Log, Detailed Activity Log (a line for every sol checked and
   every photo saved or skipped), Window Opacity, Reset View Options.
 - **Help:** Mars Vista Website, Open App Data Folder, Report a Problem (the project's GitHub issues), About.
@@ -237,8 +279,10 @@ The app never overwrites, renames or deletes files in your photo folder. It only
 <details>
 <summary><b>The app data folder</b></summary>
 
-The app keeps a few small files of its own (settings, scan results, Mars Vista request counts and the list of
-photos unavailable at NASA) in its *app data folder*, never in your photo folder. You choose it on first run; it
+The app keeps a few files of its own (settings, scan results, Mars Vista request counts, the list of photos
+unavailable at NASA, and the photo details looked up for the Photos page in `photo_details.db`) in its *app data
+folder*, never in your photo folder. The photo details grow with your library: roughly 200–250 MB for every
+Curiosity and Perseverance photo. You choose it on first run; it
 can be on any drive. The suggested place is `%LOCALAPPDATA%\RoverImageScraper\` on Windows and
 `~/.local/share/RoverImageScraper/` on macOS and Linux. Which folder you chose is remembered for your user account
 (in the Windows registry under `HKCU\Software\RoverImageScraper`, or in `~/.config/RoverImageScraper/data_folder`
@@ -387,6 +431,8 @@ All program code is in `rover_scraper/`:
 - `download.py`: downloads that never overwrite existing files.
 - `scan.py`: Library status (quick scan and full check).
 - `ratelimit.py`: counts Mars Vista requests, and the optional download limit.
+- `photo_page.py`: the Photos page. `photo_library.py`: finds the photos in the folder.
+  `photo_details.py`: looks up when and where photos were taken, and keeps the details.
 - `state.py`: the app data folder, and the photos NASA won't serve. `settings.py`: the app's saved settings.
 - `check.svg` and `check_dark.svg`: the tick drawn in checkboxes (white, or dark on light accent colors).
 

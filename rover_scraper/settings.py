@@ -37,6 +37,7 @@ class Settings:
     collapsed_cards: list[str] = field(default_factory=list)   # titles of cards folded to their title bar
     verbose_log: bool = False            # View > Detailed Activity Log
     window_opacity: int = 100            # percent (View > Window Opacity)
+    photo_thumb_size: int = 128          # Photos page: thumbnail size in pixels
 
     @classmethod
     def load(cls, path: str) -> "Settings":
