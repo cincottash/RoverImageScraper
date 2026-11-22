@@ -388,7 +388,8 @@ def _match_by_size(store: DetailsStore, folder: str, rover: str, sol: int, camer
         s = sizes_on_disk.get(f.number)
         if s is not None and by_size.get(s):
             c = by_size[s].pop(0)
-            store.record_file(folder, rover, sol, camera, f.number, c.photo_id, c.image_url, "size", commit=False)
+            # No address: the photo's record has it (saves about 130 bytes per file in a library of a million)
+            store.record_file(folder, rover, sol, camera, f.number, c.photo_id, None, "size", commit=False)
             result.matched += 1
         else:
             result.unmatched += 1
@@ -412,7 +413,9 @@ def look_up_sol(folder: str, rover: str, sol: int, sources, store: DetailsStore,
                 return result
             _match_by_size(store, folder, rover, sol, cam, by_cam.get(cam, []), nasa, cancel, result,
                            probe_first=True)
+            listed_urls = {p.id: p.url for p in listed}
             for number, (photo_id, url, _how) in store.files_in(folder, rover, sol, cam).items():
+                url = url or listed_urls.get(photo_id)            # files matched by size keep no address
                 if store.photo(photo_id) is None and url:
                     text = read_label(nasa, url)
                     if text:
