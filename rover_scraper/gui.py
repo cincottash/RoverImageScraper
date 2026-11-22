@@ -789,6 +789,9 @@ class PopupOpacity(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.level = 1.0
+        # The system's own choice of menu animations, to put back when the window is solid again
+        self.effects_default = {e: QApplication.isEffectEnabled(e) for e in
+                                (Qt.UIEffect.UI_AnimateMenu, Qt.UIEffect.UI_FadeMenu, Qt.UIEffect.UI_AnimateCombo)}
 
     @classmethod
     def for_app(cls, app: QApplication) -> "PopupOpacity":
@@ -802,7 +805,8 @@ class PopupOpacity(QObject):
         return f
 
     def eventFilter(self, obj, event) -> bool:
-        if event.type() == QEvent.Type.Show and isinstance(obj, QWidget) and obj.isWindow() and is_popup(obj):
+        if (event.type() in (QEvent.Type.Polish, QEvent.Type.Show) and isinstance(obj, QWidget) and obj.isWindow()
+                and is_popup(obj)):
             if abs(obj.windowOpacity() - self.level) > 0.005:
                 obj.setWindowOpacity(self.level)
         return False
@@ -1775,9 +1779,16 @@ class MainWindow(QMainWindow):
         (each is a separate window; ones opened later get it from PopupOpacity)."""
         level = self.settings.window_opacity / 100
         self.popup_opacity.level = level
-        for w in [self] + [p for p in QApplication.topLevelWidgets() if p.isVisible() and is_popup(p)]:
+        # Every menu, not only open ones: a menu that has its opacity before it first opens shows it from the start.
+        for w in [self] + [p for p in QApplication.topLevelWidgets() if is_popup(p)] + self.findChildren(QMenu):
             if abs(w.windowOpacity() - level) > 0.005:
                 w.setWindowOpacity(level)
+        # Qt's opening animation for menus and dropdown lists (used when a menu is opened by a click) draws them
+        # solid, ignoring the opacity, so it's off while the window is see-through.
+        solid = level >= 0.995
+        for effect in (Qt.UIEffect.UI_AnimateMenu, Qt.UIEffect.UI_FadeMenu, Qt.UIEffect.UI_AnimateCombo):
+            if QApplication.isEffectEnabled(effect) != (solid and self.popup_opacity.effects_default[effect]):
+                QApplication.setEffectEnabled(effect, solid and self.popup_opacity.effects_default[effect])
 
     def _theme_menu_hovered(self, act, theme_acts: list) -> None:
         """The pointer is on something in View > Theme that isn't a theme (a group's name): show the saved theme
