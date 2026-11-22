@@ -2491,7 +2491,7 @@ class MainWindow(QMainWindow):
                 unknown_gaps = True
             total_requests += row["requests"]
             gap_text = "not included" if not self._preview_check_existing else (
-                "unknown" if gaps is None else f"up to {gaps:,}")
+                "unknown" if gaps is None else "none" if gaps == 0 else f"up to {count(gaps, 'photo')}")
             if row["new_photos"] is None:       # NASA PDS rover: counted only while downloading
                 any_pds = True
                 photo_text, size_text = "counted as it goes", "–"
