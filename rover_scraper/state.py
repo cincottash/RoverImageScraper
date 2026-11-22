@@ -19,7 +19,7 @@ PERMANENT_STATUSES = {403, 404, 410}
 # it opens any file: on Windows the registry under the current user (HKCU\Software\RoverImageScraper, value
 # DataFolder); on Linux and macOS a one-line file, ~/.config/RoverImageScraper/data_folder.
 
-APP_DATA_FILES = ("settings.json", "scans.json", "requests.json", "unavailable.json")
+APP_DATA_FILES = ("settings.json", "scans.json", "requests.json", "unavailable.json", "photo_details.db")
 _REG_KEY, _REG_VALUE = r"Software\RoverImageScraper", "DataFolder"
 
 
@@ -110,7 +110,7 @@ def copy_app_data(src: str, dst: str) -> list[str]:
         s, d = os.path.join(src, name), os.path.join(dst, name)
         if os.path.isfile(s) and not os.path.exists(d):
             with open(s, "rb") as fin, open(d + ".part", "wb") as fout:
-                fout.write(fin.read())
+                shutil.copyfileobj(fin, fout, 4 * 1024 * 1024)       # in pieces: photo details can be large
             os.replace(d + ".part", d)
             copied.append(name)
     return copied

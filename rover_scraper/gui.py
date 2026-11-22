@@ -29,10 +29,12 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBo
                                QStackedWidget, QToolButton, QVBoxLayout, QWidget, QWidgetAction)
 
 from api import SUPPORTED_ROVERS, ApiError, Cancelled, MarsVistaClient, load_api_key, save_api_key
-from photo_library import camera_name
+from photo_library import camera_name, rovers_in, sols_in
 from photo_page import PhotosPage
 from pds import PdsClient, RequestCounter, RoverSources, is_pds_rover, latest_sol
-from download import NASA_STATUS
+from download import NASA_STATUS, make_session
+from photo_details import (DB_NAME, SIZE_CHECKS_AT_ONCE, DetailsStore, SolLookups, SolResult, describe,
+                           describe_sol, folder_key, look_up_sol)
 from plan import last_sol_on_disk
 from ratelimit import PERIODS, FileLimiter, RequestTracker
 from scan import RoverStatus, ScanStore, full_check, quick_scan
@@ -880,6 +882,7 @@ class MainWindow(QMainWindow):
         self.active_scraper: Scraper | None = None     # the running download, for settings changed mid-run
         self.api_error = ""
         self.last_summary = ""
+        self.details_totals = None               # Get Details: (sols done, SolResult totals) so far
 
         self.setWindowTitle("Rover Image Scraper")
         self.setMinimumSize(900, 560)
@@ -889,6 +892,14 @@ class MainWindow(QMainWindow):
                     min(1000, avail.height() - 60) if avail else 900)
         self._build()
         self.popup_opacity = PopupOpacity.for_app(app)
+        # Photo details: kept in the app data folder; sols without them are looked up when the Photos page shows
+        # one of their photos.
+        self.details = DetailsStore(os.path.join(STATE_DIR, DB_NAME))
+        self.lookup_key = ""                     # the API key, for look-ups on a background thread
+        self.lookups = SolLookups(self.details, self._lookup_sources, lambda: make_session(SIZE_CHECKS_AT_ONCE),
+                                  self)
+        self.lookups.finished.connect(self._lookup_finished)
+        self.photos_page.extra_details = self._photo_extra_details
         self._build_menus()
         self._load_settings_into_widgets()
         self._refresh_library()
@@ -1515,6 +1526,7 @@ class MainWindow(QMainWindow):
         return [n for n, b in self.rover_boxes.items() if b.isChecked()]
 
     def _validate(self) -> None:
+        self.lookup_key = self._key()
         folder_given = bool(self._folder())
         folder_exists = folder_given and os.path.isdir(self._folder())
         key_ok = bool(self._key())
@@ -1745,6 +1757,11 @@ class MainWindow(QMainWindow):
             self.button_actions.append((act, button))
         download_m.aboutToShow.connect(self._sync_button_actions)
         download_m.addSeparator()
+        self.act_details = download_m.addAction("Get Details for Downloaded Photos…")
+        self.act_details.setToolTip("Look up when and where each photo in the folder was taken, for the Photos "
+                                    "page. Sols already looked up are skipped.")
+        self.act_details.triggered.connect(self._get_details)
+        download_m.addSeparator()
         self.act_retry = download_m.addAction("Retry Photos Unavailable at NASA (Next Run)")
         self.act_retry.setCheckable(True)
         self.act_retry.setToolTip("Photos NASA's servers won't send (HTTP 403/404) are normally skipped on later "
@@ -1825,6 +1842,7 @@ class MainWindow(QMainWindow):
             act.setChecked(n == name)
         self._update_page_status()
         if name == "Photos":
+            self.lookups.failed.clear()          # look-ups that failed are tried again
             self.photos_page.setFocus()
 
     def _update_page_status(self) -> None:
@@ -1838,10 +1856,139 @@ class MainWindow(QMainWindow):
         if self.page_status.text() != text:
             self.page_status.setText(text)
 
-    def _photo_saved(self, path: str) -> None:
-        p = self.photos_page.photo_saved(path)
+    def _photo_saved(self, e: dict) -> None:
+        dest = self.run_params.get("folder") or self._folder()
+        if e.get("photo_id") is not None and e.get("number") is not None:
+            # Which photo the file is, so its details need no matching; the sol is looked up again for them.
+            self.details.record_file(dest, e["rover"], e["sol"], e["camera"], e["number"], e["photo_id"],
+                                     e.get("url"), "download")
+            self.details.forget_sol(dest, e["rover"], e["sol"])
+        p = self.photos_page.photo_saved(e["path"])
         if p is not None:
             self.latest_photo = p
+
+    # ---- photo details -------------------------------------------------------------------------------------
+
+    def _lookup_sources(self, rover: str):
+        """Sources for a look-up on the background thread; None when Mars Vista is needed but there's no key."""
+        if not is_pds_rover(rover) and not self.lookup_key:
+            return None
+        return RoverSources(MarsVistaClient(self.lookup_key, tracker=self.tracker, cancel=self.lookups.cancel),
+                            PdsClient(cancel=self.lookups.cancel, counter=self.pds_requests))
+
+    def _photo_extra_details(self, p) -> list[tuple[str, str]]:
+        """Details looked up online for a photo on the Photos page, or why there are none (yet)."""
+        folder = self.photos_page.loaded_folder or self._folder()
+        info, link = self.details.file_photo(folder, p.rover, p.sol, p.camera, p.number)
+        if info is not None:
+            return describe(info)
+        summary = self.details.sol_state(folder, p.rover, p.sol)
+        if summary is not None:
+            rows = [] if link else describe_sol(summary)
+            return rows or [("More Details", "None found for this photo.")]
+        key = (folder_key(folder), p.rover, p.sol)
+        if self.lookups.pending(folder, p.rover, p.sol):
+            return [("More Details", "Looking up…")]
+        error = self.lookups.failed.get(key)
+        if error == "no key" and not self.lookup_key:
+            return [("More Details", "Add an API key on the Download page to look up when and where this photo "
+                                     "was taken.")]
+        if error and error != "no key":
+            return [("More Details", f"Couldn't be looked up: {error}. Tried again when the Photos page is "
+                                     "opened again.")]
+        self.lookups.request(folder, p.rover, p.sol)
+        return [("More Details", "Looking up…")]
+
+    def _lookup_finished(self, rover: str, sol: int, error: str) -> None:
+        if self.lookups.cancel.is_set():           # the window is closing; the details file may be closed
+            return
+        cur = self.photos_page.current
+        if cur is not None and cur.rover == rover and cur.sol == sol:
+            self.photos_page.refresh_details()
+
+    def _get_details(self) -> None:
+        """Download > Get Details for Downloaded Photos…: look up every sol in the folder not looked up yet."""
+        if not self._ensure_folder():
+            return
+        folder = self._folder()
+        rovers = rovers_in(folder)
+        todo = {r: [s for s in sols_in(folder, r) if s not in self.details.sols_done(folder, r)] for r in rovers}
+        total = sum(len(v) for v in todo.values())
+        if not total:
+            QMessageBox.information(self, "Get Details", "Every sol in the photo folder has been looked up "
+                                                         "already.")
+            return
+        needs_key = [r for r in rovers if todo[r] and not is_pds_rover(r)]
+        if needs_key and not self._key():
+            QMessageBox.information(self, "Get Details", f"Looking up {', '.join(needs_key)} needs a Mars Vista "
+                                                         "API key. Paste it under API Key first.")
+            return
+        per_rover = "\n".join(f"  {r}: {count(len(todo[r]), 'sol')}" for r in rovers if todo[r])
+        answer = QMessageBox.question(
+            self, "Get Details for Downloaded Photos",
+            f"Look up when and where the photos in the folder were taken:\n\n{per_rover}\n\n"
+            "Curiosity and Perseverance use about one Mars Vista request per 100 photos, plus a size check of "
+            "each photo on NASA's servers (nothing is downloaded). Spirit and Opportunity use a few requests to "
+            "NASA's archive per sol.\n\nA whole library can take several hours. Stop keeps what's done, and the "
+            "next run continues where it stopped. The photo folder isn't changed.\n\nStart?")
+        if answer == QMessageBox.StandardButton.Yes:
+            self._run_details(folder, todo)
+
+    def _run_details(self, folder: str, todo: dict[str, list[int]]) -> None:
+        self._save_settings()
+        self._save_key()
+        key = self._key()
+        self.report = None
+        self.details_totals = None
+        self.summary.setVisible(False)
+        self.problems_btn.setVisible(False)
+        self.run_started = time.time()
+        self._log(f"=== Getting photo details started {time.strftime('%H:%M')}")
+
+        def work():
+            sources = self._client(key)
+            nasa = make_session(SIZE_CHECKS_AT_ONCE)
+            totals = SolResult()
+            sols_done = 0
+            for rover, sols in todo.items():
+                if not sols:
+                    continue
+                self._post("progress", {"event": "rover", "rover": rover, "total": len(sols), "sol_min": sols[0]})
+                for i, sol in enumerate(sols, 1):
+                    if self.cancel.is_set():
+                        break
+                    self._post("progress", {"event": "sol", "rover": rover, "sol": sol, "index": i,
+                                            "total": len(sols)})
+                    r = look_up_sol(folder, rover, sol, sources, self.details, nasa, self.cancel)
+                    if self.cancel.is_set():
+                        break
+                    sols_done += 1
+                    for f in ("files", "known", "matched", "unmatched"):
+                        setattr(totals, f, getattr(totals, f) + getattr(r, f))
+                    self._post("details_totals", (sols_done, totals))
+                    self._detail(f"     {rover} sol {sol}: {r.matched:,} matched now, {r.known:,} known before, "
+                                 f"{r.unmatched:,} without a match")
+            self.tracker.save()
+            return sols_done, totals
+
+        self._run_task("details", work)
+
+    def _show_details_summary(self, value, cancelled: bool) -> None:
+        sols_done, t = value if value else (self.details_totals or (0, SolResult()))
+        state = "Stopped" if cancelled else "Finished"
+        matched = t.known + t.matched
+        text = (f"<b>{state}.</b> {count(sols_done, 'sol')} looked up: {count(matched, 'photo')} of "
+                f"{t.files:,} matched to NASA's records ({t.matched:,} new).")
+        if t.unmatched:
+            text += (f" {count(t.unmatched, 'photo')} couldn't be matched (older copies and thumbnails NASA no "
+                     "longer lists); they show details for their whole sol where there are any.")
+        if cancelled:
+            text += " The next run continues where this one stopped."
+        self.summary.setText(text)
+        self.summary.setVisible(True)
+        self._log(f"=== Getting photo details {state.lower()} {time.strftime('%H:%M')}: {count(sols_done, 'sol')}, "
+                  f"{count(matched, 'photo')} matched, {t.unmatched:,} without a match")
+        self.photos_page.refresh_details()
 
     def _update_latest_photo(self) -> None:
         p = self.latest_photo
@@ -1873,6 +2020,7 @@ class MainWindow(QMainWindow):
 
     def _sync_button_actions(self) -> None:
         """Download menu items follow their buttons (enabled state, and Start/Resume wording)."""
+        self.act_details.setEnabled(self.mode == "idle" and bool(self._folder()))
         for act, button in self.button_actions:
             act.setEnabled(button.isEnabled() and button.isVisible())
             act.setText(button.text().replace("▶", "").strip())
@@ -2072,6 +2220,8 @@ class MainWindow(QMainWindow):
             return
         if os.path.normcase(dlg.data_dir()) == os.path.normcase(os.path.abspath(STATE_DIR)):
             return
+        self.lookups.close()
+        self.details.flush()               # the photo details are copied as one file
         dlg.apply()
         self.close()                        # saves settings into the new folder, then a fresh copy starts there
         args = sys.argv[1:] if getattr(sys, "frozen", False) else [os.path.abspath(__file__)] + sys.argv[1:]
@@ -2501,6 +2651,8 @@ class MainWindow(QMainWindow):
                 self._log(payload)
             elif kind == "scanned":
                 self._refresh_library()
+            elif kind == "details_totals":
+                self.details_totals = payload
         if lines:
             self._log("\n".join(lines))
         self._update_live()
@@ -2547,7 +2699,7 @@ class MainWindow(QMainWindow):
         elif kind == "camera":
             ps["camera"] = e["camera"]
         elif kind == "saved":
-            self._photo_saved(e["path"])
+            self._photo_saved(e)
         elif kind == "scan_start":
             ps.clear()
             ps.update(scan_rover=e["rover"], full=e["full"])
@@ -2570,6 +2722,8 @@ class MainWindow(QMainWindow):
         elif mode in ("scan", "full"):
             self._log(f"=== {'Full check' if mode == 'full' else 'Quick scan'} "
                       f"{'stopped' if cancelled else 'finished'} {time.strftime('%H:%M')}")
+        elif mode == "details":
+            self._show_details_summary(value, cancelled)
         if mode == "download":
             self._update_progress()             # final counter values
             self.run_ended = time.time()
@@ -2582,7 +2736,7 @@ class MainWindow(QMainWindow):
         self._set_mode("idle")
         if paused and self.checkpoint:
             self._show_paused_state()
-        elif mode in ("download", "scan", "full"):
+        elif mode in ("download", "scan", "full", "details"):
             self.phase.setText("Stopped" if cancelled else "Finished")
             self.bar.setValue(self.bar.value() if cancelled else 1000)
         else:
@@ -2788,6 +2942,17 @@ class MainWindow(QMainWindow):
                 self.phase.setText("Starting…")
         elif self.mode == "preview":
             self.phase.setText("Estimating…")
+        elif self.mode == "details" and not self.cancel.is_set():
+            if ps.get("total"):
+                done, totals = self.details_totals or (0, None)
+                where = (f"Getting details · {ps.get('rover')} · sol {fmt(ps.get('sol'))} "
+                         f"({ps.get('index', 0):,} of {ps['total']:,})")
+                if totals is not None:
+                    where += f" · {count(totals.known + totals.matched, 'photo')} matched"
+                self.phase.setText(where)
+                self.bar.setValue(int(1000 * ps.get("index", 0) / max(1, ps["total"])))
+            else:
+                self.phase.setText("Getting details…")
 
         self._update_counters()
         self._update_page_status()
@@ -2908,6 +3073,8 @@ class MainWindow(QMainWindow):
         self._save_settings()
         self.tracker.save()
         self.photos_page.shutdown()
+        self.lookups.close()
+        self.details.close()
         event.accept()
 
 

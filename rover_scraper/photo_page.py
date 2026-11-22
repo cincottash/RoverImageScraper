@@ -14,8 +14,8 @@ import threading
 import time
 from typing import Callable
 
-from PySide6.QtCore import (QAbstractListModel, QModelIndex, QObject, QPointF, QRect, QRectF, QSize, Qt, QTimer,
-                            QUrl, Signal)
+from PySide6.QtCore import (QAbstractListModel, QEvent, QModelIndex, QObject, QPointF, QRect, QRectF, QSize, Qt,
+                            QTimer, QUrl, Signal)
 from PySide6.QtGui import (QColor, QDesktopServices, QImage, QImageReader, QIntValidator, QPainter, QPalette,
                            QPixmap)
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -406,11 +406,38 @@ def _card(title: str | None = None) -> tuple[QFrame, QVBoxLayout]:
     return frame, lay
 
 
+class WrapLabel(QLabel):
+    """A word-wrapped label that always gets the height its text needs at its current width (a grid otherwise
+    gives it one line and cuts off the rest)."""
+
+    def __init__(self, text: str = ""):
+        super().__init__(text)
+        self.setWordWrap(True)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def _fit(self) -> None:
+        need = self.heightForWidth(max(1, self.width()))
+        if need > 0 and self.minimumHeight() != need:
+            self.setMinimumHeight(need)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit()
+
+    def setText(self, text: str) -> None:
+        super().setText(text)
+        self._fit()
+
+    def changeEvent(self, event) -> None:          # font or style changes (theme switch) change the height
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            self._fit()
+
+
 def _label(text: str = "", name: str | None = None, wrap: bool = False) -> QLabel:
-    lbl = QLabel(text)
+    lbl = WrapLabel(text) if wrap else QLabel(text)
     if name:
         lbl.setObjectName(name)
-    lbl.setWordWrap(wrap)
     return lbl
 
 
@@ -834,20 +861,24 @@ class PhotosPage(QWidget):
     # ---- details and preview -----------------------------------------------------------------------------
 
     def _set_detail_rows(self, rows: list[tuple[str, str]]) -> None:
-        while len(self.detail_rows) < len(rows):
-            head, value = _label("", "rowHead"), _label("", "value", wrap=True)
-            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            r = len(self.detail_rows)
+        # New labels each time: a reused label with selectable text kept the height of its earlier, longer text
+        # (a one-line time sat in three lines of space).
+        for head, value in self.detail_rows:
+            for w in (head, value):
+                self.detail_grid.removeWidget(w)
+                w.hide()
+                w.deleteLater()
+        self.detail_rows = []
+        for r, (name, text) in enumerate(rows):
+            head, value = _label(name, "rowHead"), _label("", "value", wrap=True)
+            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)   # selectable, links
+            value.setOpenExternalLinks(True)
+            value.setText(text)
+            if name == "File" and self.current:
+                value.setToolTip(self.current.path)
             self.detail_grid.addWidget(head, r, 0, Qt.AlignmentFlag.AlignTop)
             self.detail_grid.addWidget(value, r, 1)
             self.detail_rows.append((head, value))
-        for i, (head, value) in enumerate(self.detail_rows):
-            shown = i < len(rows)
-            head.setVisible(shown)
-            value.setVisible(shown)
-            if shown:
-                head.setText(rows[i][0])
-                value.setText(rows[i][1])
 
     def details_for(self, p: PhotoFile) -> list[tuple[str, str]]:
         rows = [("Rover", p.rover), ("Sol", f"{p.sol}"), ("Camera", camera_name(p.camera))]
@@ -864,7 +895,7 @@ class PhotosPage(QWidget):
             rows.append(("File Size", fmt_file_size(os.path.getsize(p.path))))
         except OSError:
             rows.append(("File Size", "File not found"))
-        rows.append(("File", os.path.join(p.rover, str(p.sol), p.camera, p.name)))
+        rows.append(("File", p.name))         # its folder is the rover, sol and camera above (full path: tooltip)
         return rows
 
     def _show_details(self, p: PhotoFile | None) -> None:
