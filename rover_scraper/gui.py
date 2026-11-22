@@ -23,9 +23,9 @@ from PySide6.QtCore import QEvent, QProcess, Qt, QTimer, QUrl
 from PySide6.QtGui import (QActionGroup, QColor, QDesktopServices, QFont, QIcon, QIntValidator, QKeySequence,
                            QPalette)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QGridLayout,
-                               QComboBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
-                               QProgressBar, QPushButton, QScrollArea, QSizePolicy, QToolButton,
-                               QVBoxLayout, QWidget)
+                               QComboBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
+                               QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSlider,
+                               QToolButton, QVBoxLayout, QWidget, QWidgetAction)
 
 from api import SUPPORTED_ROVERS, ApiError, Cancelled, MarsVistaClient, load_api_key, save_api_key
 from pds import PdsClient, RequestCounter, RoverSources, is_pds_rover, latest_sol
@@ -35,7 +35,7 @@ from ratelimit import PERIODS, FileLimiter, RequestTracker
 from scan import RoverStatus, ScanStore, full_check, quick_scan
 from scraper import Report, Scraper
 from dataclasses import asdict
-from settings import Settings
+from settings import OPACITY_MIN, Settings
 from state import (APP_DATA_FILES, NO_DATA_FOLDER, Unavailable, chosen_state_dir, copy_app_data, default_state_dir,
                    keeps_app_data, save_state_dir, session_state_dir, standard_state_dir)
 
@@ -66,6 +66,11 @@ MAIN_ROVERS = ("Curiosity", "Perseverance")          # always shown in Library s
 
 def fmt(n) -> str:
     return "N/A" if n is None else f"{n:,}"
+
+
+def count(n: int, word: str) -> str:
+    """A number with its unit, singular or plural: "1 sol", "2,514 photos"."""
+    return f"{n:,} {word}" + ("" if n == 1 else "s")
 
 
 def fmt_size(num_bytes) -> str:
@@ -173,9 +178,9 @@ def _variant(base: dict, bg, card, border, text, muted, accent, accent_hover, in
 # Solarized, Gruvbox, Catppuccin and others; see the README); the "Space" themes are this app's own.
 L, D = LIGHT, DARK
 THEMES = [
-    ("Light themes", "Light", "light", LIGHT),
-    ("Dark themes", "Dark", "dark", DARK),
-    ("Dark themes", "High Contrast", "high_contrast", _variant(D, "#000000", "#000000", "#FFFFFF", "#FFFFFF", "#D0D0D0",
+    ("Light Themes","Light", "light", LIGHT),
+    ("Dark Themes","Dark", "dark", DARK),
+    ("Dark Themes","High Contrast", "high_contrast", _variant(D, "#000000", "#000000", "#FFFFFF", "#FFFFFF", "#D0D0D0",
                                                           "#FFD400", "#FFE45C", "#000000", "#333333",
                                                           accent_text="#000000", ok="#7CFF7C", warn="#FFE45C",
                                                           err="#FF8080")),
@@ -234,109 +239,109 @@ THEMES = [
                                                        "#8B5E34", "#6E4A28", "#FFFFFB", "#FFEFD2")),
 
     # ---- more dark themes (open-source editor color schemes) ----
-    ("Dark themes", "Nord", "nord", _variant(D, "#2E343F", "#3B4251", "#4C5669", "#ECEFF4", "#AEB7C8",
+    ("Dark Themes","Nord", "nord", _variant(D, "#2E343F", "#3B4251", "#4C5669", "#ECEFF4", "#AEB7C8",
                                               "#88C0D0", "#8FBCBB", "#292E38", "#434C5D", accent_text="#2E3440")),
-    ("Dark themes", "Dracula", "dracula", _variant(D, "#251F28", "#2C2732", "#484455", "#F8F8F2", "#A4ADD3",
+    ("Dark Themes","Dracula", "dracula", _variant(D, "#251F28", "#2C2732", "#484455", "#F8F8F2", "#A4ADD3",
                                                     "#BD93F9", "#FF79C6", "#1F1920", "#484455",
                                                     accent_text="#282A36")),
-    ("Dark themes", "Solarized Dark", "solarized_dark", _variant(D, "#002B36", "#073642", "#0E4B59", "#EEE8D5",
+    ("Dark Themes","Solarized Dark", "solarized_dark", _variant(D, "#002B36", "#073642", "#0E4B59", "#EEE8D5",
                                                                   "#93A1A1", "#268BD2", "#2AA198", "#00222B",
                                                                   "#0B4250")),
-    ("Dark themes", "Gruvbox Dark", "gruvbox_dark", _variant(D, "#162121", "#222928", "#4A4B45", "#EBDBB2",
+    ("Dark Themes","Gruvbox Dark", "gruvbox_dark", _variant(D, "#162121", "#222928", "#4A4B45", "#EBDBB2",
                                                               "#A89984", "#FABD2F", "#FE8019", "#131D1D",
                                                               "#373936", accent_text="#282828")),
-    ("Dark themes", "One Dark", "one_dark", _variant(D, "#1F252A", "#262C33", "#3C4450", "#ABB2BF", "#8B919C",
+    ("Dark Themes","One Dark", "one_dark", _variant(D, "#1F252A", "#262C33", "#3C4450", "#ABB2BF", "#8B919C",
                                                       "#61AFEF", "#8AC4F5", "#1C2226", "#2A3139",
                                                       accent_text="#1E2227")),
-    ("Dark themes", "Tokyo Night", "tokyo_night", _variant(D, "#0C1822", "#0F1D2B", "#1C3148", "#C0CAF5",
+    ("Dark Themes","Tokyo Night", "tokyo_night", _variant(D, "#0C1822", "#0F1D2B", "#1C3148", "#C0CAF5",
                                                             "#9AA5CE", "#7AA2F7", "#9ABDF5", "#07151E",
                                                             "#1C3148", accent_text="#16161E")),
-    ("Dark themes", "Catppuccin Mocha", "catppuccin_mocha", _variant(D, "#141827", "#1A1E30", "#2E3246", "#CDD6F4",
+    ("Dark Themes","Catppuccin Mocha", "catppuccin_mocha", _variant(D, "#141827", "#1A1E30", "#2E3246", "#CDD6F4",
                                                                       "#A6ADC8", "#CBA6F7", "#B4BEFE", "#0E111D",
                                                                       "#2E3246", accent_text="#1E1E2E")),
-    ("Dark themes", "Catppuccin Macchiato", "catppuccin_macchiato",
+    ("Dark Themes","Catppuccin Macchiato", "catppuccin_macchiato",
      _variant(D, "#172135", "#1D283F", "#2F3B54", "#CAD3F5", "#A5ADCB", "#C6A0F6", "#B7BDF8", "#111A2A", "#2F3B54",
               accent_text="#24273A")),
-    ("Dark themes", "Catppuccin Frappé", "catppuccin_frappe",
+    ("Dark Themes","Catppuccin Frappé", "catppuccin_frappe",
      _variant(D, "#292F41", "#30374B", "#41485F", "#C6D0F5", "#A5ADCE", "#CA9EE6", "#BABBF1", "#232939", "#41485F",
               accent_text="#303446")),
-    ("Dark themes", "Rosé Pine", "rose_pine", _variant(D, "#201624", "#261C2E", "#2D223A", "#E0DEF4", "#908CAA",
+    ("Dark Themes","Rosé Pine", "rose_pine", _variant(D, "#201624", "#261C2E", "#2D223A", "#E0DEF4", "#908CAA",
                                                         "#C4A7E7", "#EBBCBA", "#1B131F", "#2D223A",
                                                         accent_text="#191724")),
-    ("Dark themes", "Rosé Pine Moon", "rose_pine_moon", _variant(D, "#24233B", "#2B2944", "#3A3757", "#E0DEF4",
+    ("Dark Themes","Rosé Pine Moon", "rose_pine_moon", _variant(D, "#24233B", "#2B2944", "#3A3757", "#E0DEF4",
                                                                   "#908CAA", "#C4A7E7", "#EA9A97", "#201F35",
                                                                   "#3A3757", accent_text="#232136")),
-    ("Dark themes", "Everforest Dark", "everforest_dark", _variant(D, "#283135", "#2E383D", "#48555B", "#D3C6AA",
+    ("Dark Themes","Everforest Dark", "everforest_dark", _variant(D, "#283135", "#2E383D", "#48555B", "#D3C6AA",
                                                                     "#9DA9A0", "#A7C080", "#83C092", "#242D2F",
                                                                     "#3E4B50", accent_text="#2D353B")),
-    ("Dark themes", "Kanagawa", "kanagawa", _variant(D, "#181019", "#211A23", "#383141", "#DCD7BA", "#A6A69C",
+    ("Dark Themes","Kanagawa", "kanagawa", _variant(D, "#181019", "#211A23", "#383141", "#DCD7BA", "#A6A69C",
                                                       "#7E9CD8", "#7FB4CA", "#150D16", "#2C2532",
                                                       accent_text="#16161D")),
-    ("Dark themes", "Ayu Dark", "ayu_dark", _variant(D, "#080C15", "#0F141D", "#232934", "#BFBDB6", "#8A8F98",
+    ("Dark Themes","Ayu Dark", "ayu_dark", _variant(D, "#080C15", "#0F141D", "#232934", "#BFBDB6", "#8A8F98",
                                                       "#E6B450", "#FFB454", "#050710", "#1C222C",
                                                       accent_text="#0B0E14")),
-    ("Dark themes", "Ayu Mirage", "ayu_mirage", _variant(D, "#1A2533", "#1F2A39", "#2F3C4F", "#CCCAC2", "#9DA2AC",
+    ("Dark Themes","Ayu Mirage", "ayu_mirage", _variant(D, "#1A2533", "#1F2A39", "#2F3C4F", "#CCCAC2", "#9DA2AC",
                                                           "#FFCC66", "#FFD580", "#15202C", "#283446",
                                                           accent_text="#1F2430")),
-    ("Dark themes", "Palenight", "palenight", _variant(D, "#282535", "#2E2C3E", "#3F3E58", "#C8CCE6", "#959DCB",
+    ("Dark Themes","Palenight", "palenight", _variant(D, "#282535", "#2E2C3E", "#3F3E58", "#C8CCE6", "#959DCB",
                                                         "#C792EA", "#82AAFF", "#232030", "#39314A",
                                                         accent_text="#1E2130")),
-    ("Dark themes", "Night Owl", "night_owl", _variant(D, "#011627", "#0B2942", "#1D3B53", "#D6DEEB", "#8FAABF",
+    ("Dark Themes","Night Owl", "night_owl", _variant(D, "#011627", "#0B2942", "#1D3B53", "#D6DEEB", "#8FAABF",
                                                         "#82AAFF", "#C792EA", "#01111D", "#13344F",
                                                         accent_text="#011627")),
-    ("Dark themes", "Cobalt2", "cobalt2", _variant(D, "#14232C", "#173548", "#285A79", "#FFFFFF", "#A7C0D2",
+    ("Dark Themes","Cobalt2", "cobalt2", _variant(D, "#14232C", "#173548", "#285A79", "#FFFFFF", "#A7C0D2",
                                                     "#FFC600", "#FFD84D", "#112737", "#214E6C",
                                                     accent_text="#193549")),
-    ("Dark themes", "Synthwave '84", "synthwave84", _variant(D, "#22172E", "#2A2039", "#4A3169", "#F4EEFF",
+    ("Dark Themes","Synthwave '84", "synthwave84", _variant(D, "#22172E", "#2A2039", "#4A3169", "#F4EEFF",
                                                               "#B6A8D2", "#FF7EDB", "#F97E72", "#1E1329",
                                                               "#382653", accent_text="#241B2F")),
-    ("Dark themes", "Tomorrow Night", "tomorrow_night", _variant(D, "#211D1E", "#2C282B", "#3C393E", "#C5C8C6",
+    ("Dark Themes","Tomorrow Night", "tomorrow_night", _variant(D, "#211D1E", "#2C282B", "#3C393E", "#C5C8C6",
                                                                   "#969896", "#81A2BE", "#B294BB", "#1A1516",
                                                                   "#3C393E", accent_text="#1D1F21")),
-    ("Dark themes", "Monokai", "monokai", _variant(D, "#1F1F1B", "#282821", "#4A483C", "#F8F8F2", "#A59F85",
+    ("Dark Themes","Monokai", "monokai", _variant(D, "#1F1F1B", "#282821", "#4A483C", "#F8F8F2", "#A59F85",
                                                     "#A6E22E", "#E6DB74", "#1B1B16", "#3F3D31",
                                                     accent_text="#272822")),
-    ("Dark themes", "Zenburn", "zenburn", _variant(D, "#383838", "#3F3F3F", "#5B5B5B", "#DCDCCC", "#A8A897",
+    ("Dark Themes","Zenburn", "zenburn", _variant(D, "#383838", "#3F3F3F", "#5B5B5B", "#DCDCCC", "#A8A897",
                                                     "#8CD0D3", "#93E0E3", "#313131", "#4F4F4F",
                                                     accent_text="#2B2B2B")),
 
     # ---- more light themes ----
-    ("Light themes", "Nord Light", "nord_light", _variant(L, "#DCEAF9", "#E3F0FD", "#CFDFF2", "#2E3440",
+    ("Light Themes","Nord Light", "nord_light", _variant(L, "#DCEAF9", "#E3F0FD", "#CFDFF2", "#2E3440",
                                                            "#4C566A", "#5E81AC", "#4C6A93", "#F6FFFF", "#CFDFF2")),
-    ("Light themes", "Solarized Light", "solarized_light", _variant(L, "#EEE6D6", "#FDF4E4", "#DDD4C2", "#3B4D54",
+    ("Light Themes","Solarized Light", "solarized_light", _variant(L, "#EEE6D6", "#FDF4E4", "#DDD4C2", "#3B4D54",
                                                                      "#657B83", "#268BD2", "#1F6FA8", "#FFF9F0",
                                                                      "#E4DBC9")),
-    ("Light themes", "Gruvbox Light", "gruvbox_light", _variant(L, "#F3E5BD", "#FCF1C8", "#D6C4A2", "#3C3836",
+    ("Light Themes","Gruvbox Light", "gruvbox_light", _variant(L, "#F3E5BD", "#FCF1C8", "#D6C4A2", "#3C3836",
                                                                  "#7C6F64", "#AF3A03", "#8F3002", "#FFFAE4",
                                                                  "#ECDBB3")),
-    ("Light themes", "One Light", "one_light", _variant(L, "#E9E0DF", "#F9F0ED", "#D3CBCA", "#383A42", "#696C77",
+    ("Light Themes","One Light", "one_light", _variant(L, "#E9E0DF", "#F9F0ED", "#D3CBCA", "#383A42", "#696C77",
                                                          "#4078F2", "#2F5FD0", "#FEF5F2", "#DFD7D6")),
-    ("Light themes", "Catppuccin Latte", "catppuccin_latte", _variant(L, "#E5E7EE", "#EEEFF4", "#CBCED9",
+    ("Light Themes","Catppuccin Latte", "catppuccin_latte", _variant(L, "#E5E7EE", "#EEEFF4", "#CBCED9",
                                                                        "#4C4F69", "#6C6F85", "#8839EF", "#7028D4",
                                                                        "#FEFDFE", "#DBDEE7")),
-    ("Light themes", "Rosé Pine Dawn", "rose_pine_dawn", _variant(L, "#FFF7EF", "#FFFDF5", "#F1DDDB", "#575279",
+    ("Light Themes","Rosé Pine Dawn", "rose_pine_dawn", _variant(L, "#FFF7EF", "#FFFDF5", "#F1DDDB", "#575279",
                                                                    "#797593", "#907AA9", "#286983", "#FFFFFD",
                                                                    "#FFECE3")),
-    ("Light themes", "Everforest Light", "everforest_light", _variant(L, "#EBEBD0", "#F9F6DF", "#D9D8BA",
+    ("Light Themes","Everforest Light", "everforest_light", _variant(L, "#EBEBD0", "#F9F6DF", "#D9D8BA",
                                                                        "#3A454B", "#5F6B63", "#6F8A0B", "#5A7008",
                                                                        "#FBFBEB", "#E2E2C8")),
-    ("Light themes", "Tokyo Night Day", "tokyo_night_day", _variant(L, "#D5D5DA", "#E1E1E6", "#C4C7D9", "#1F3B80",
+    ("Light Themes","Tokyo Night Day", "tokyo_night_day", _variant(L, "#D5D5DA", "#E1E1E6", "#C4C7D9", "#1F3B80",
                                                                      "#4F5E96", "#2E7DE9", "#1D63C7", "#F2F2F5",
                                                                      "#CBCCD5")),
-    ("Light themes", "Kanagawa Lotus", "kanagawa_lotus", _variant(L, "#E4DDAF", "#F1ECBB", "#D4CEA2", "#3C3C4E",
+    ("Light Themes","Kanagawa Lotus", "kanagawa_lotus", _variant(L, "#E4DDAF", "#F1ECBB", "#D4CEA2", "#3C3C4E",
                                                                    "#625F52", "#4D699B", "#3B5481", "#F9F6D5",
                                                                    "#E6DB9F")),
-    ("Light themes", "Ayu Light", "ayu_light", _variant(L, "#DFEFEE", "#EBFAF8", "#CBDCDD", "#4C5157", "#787B80",
+    ("Light Themes","Ayu Light", "ayu_light", _variant(L, "#DFEFEE", "#EBFAF8", "#CBDCDD", "#4C5157", "#787B80",
                                                          "#C86A14", "#A85710", "#EEFDFB", "#D6E6E5")),
-    ("Light themes", "Tomorrow", "tomorrow", _variant(L, "#E5E8E0", "#F5F8F0", "#CCCFC8", "#4D4D4C", "#7A7A78",
+    ("Light Themes","Tomorrow", "tomorrow", _variant(L, "#E5E8E0", "#F5F8F0", "#CCCFC8", "#4D4D4C", "#7A7A78",
                                                        "#4271AE", "#345A8B", "#F5F8F0", "#DCDFD8")),
-    ("Light themes", "Paper", "paper", _variant(L, "#F1FDF0", "#FBFFFD", "#DCE6D4", "#2B2A27", "#6E6A62",
+    ("Light Themes","Paper", "paper", _variant(L, "#F1FDF0", "#FBFFFD", "#DCE6D4", "#2B2A27", "#6E6A62",
                                                  "#3D5A80", "#2C4460", "#FBFFFF", "#E6F0DF")),
-    ("Light themes", "Sepia", "sepia", _variant(L, "#F2E0C7", "#FBECD7", "#E0C9A7", "#4A3B28", "#7A6A52",
+    ("Light Themes","Sepia", "sepia", _variant(L, "#F2E0C7", "#FBECD7", "#E0C9A7", "#4A3B28", "#7A6A52",
                                                  "#8A5A2B", "#6E4721", "#FFF5E3", "#EAD5B6")),
 ]
 THEME_COLORS = {key: colors for _, _, key, colors in THEMES}
-THEME_GROUPS = ("Space", "Dark themes", "Light themes")
+THEME_GROUPS = ("Space", "Dark Themes", "Light Themes")
 
 
 def system_is_dark(app: QApplication) -> bool:
@@ -395,14 +400,15 @@ def apply_theme(app: QApplication, t: dict, only=None) -> None:
     target.setStyleSheet(f"""
         QWidget {{ font-family: "Segoe UI"; font-size: 10pt; }}
         QMainWindow, QWidget#root {{ background: {t['bg']}; }}
-        QMenuBar {{ background: {t['card']}; padding: 2px 8px; }}
-        QMenuBar::item {{ padding: 5px 10px; border-radius: 4px; background: transparent; }}
+        QMenuBar {{ background: {t['card']}; padding: 0; margin: 0; spacing: 0; }}
+        QMenuBar::item {{ padding: 4px 8px; margin: 0; border-radius: 0; background: transparent; }}
         QMenuBar::item:selected {{ background: {t['track']}; }}
         QMenu {{ background: {t['card']}; border: 1px solid {t['border']}; padding: 4px; }}
         QMenu::item {{ padding: 6px 28px 6px 26px; border-radius: 4px; color: {t['text']}; }}
         QMenu::item:selected {{ background: {t['accent']}; color: {t['accent_text']}; }}
         QMenu::item:disabled {{ color: {t['muted']}; }}
         QMenu::separator {{ height: 1px; background: {t['border']}; margin: 4px 8px; }}
+        QMenu QWidget#menuRow, QMenu QWidget#menuRow QLabel {{ background: transparent; color: {t['text']}; }}
         QFrame#header, QFrame#bottomBar {{ background: {t['card']}; border: none; }}
         QFrame#header {{ border-bottom: 1px solid {t['border']}; }}
         QFrame#bottomBar {{ border-top: 1px solid {t['border']}; }}
@@ -621,14 +627,14 @@ class NumberChoice(QComboBox):
 
 
 class SetupDialog(QDialog):
-    """First-run setup (and Settings > Change app data folder): where the app keeps its own files and, on first
+    """First-run setup (and Settings > Change App Data Folder): where the app keeps its own files and, on first
     run, where photos go. Each can be on a different drive from the program."""
 
     def __init__(self, parent=None, current: str | None = None, first_run: bool = True):
         super().__init__(parent)
         self.first_run = first_run
         self.old_dir = current or standard_state_dir()
-        self.setWindowTitle("First-time setup" if first_run else "Change app data folder")
+        self.setWindowTitle("First-Time Setup" if first_run else "Change App Data Folder")
         self.setMinimumWidth(620)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(22, 18, 22, 16)
@@ -639,34 +645,40 @@ class SetupDialog(QDialog):
                                 "have to be on the drive the program runs from.", "muted", wrap=True))
         start_dir = standard_state_dir() if first_run or not keeps_app_data() else self.old_dir
         self.data_edit, self.data_free, self.data_browse = self._folder_row(
-            lay, "App data folder",
-            "Settings, scan results, Mars Vista request counts and the list of photos NASA refused. A few "
+            lay, "App Data Folder",
+            "Settings, scan results, Mars Vista request counts and the list of photos unavailable at NASA. A few "
             "megabytes.", start_dir)
-        self.nokeep_box = QCheckBox("Don't keep app data: start fresh every time the app opens")
+        self.nokeep_box = QCheckBox("Don't Keep App Data")
+        self.nokeep_box.setToolTip("Start fresh every time the app opens. Downloaded photos are always kept.")
         self.nokeep_box.setChecked(not first_run and not keeps_app_data())
         self.nokeep_box.toggled.connect(self._refresh)
         lay.addWidget(self.nokeep_box)
         self.nokeep_note = label(
             "Nothing is kept between launches: settings, scan results, Mars Vista request counts and the list of "
-            "photos NASA refused live in a temporary folder that's deleted when the app closes. Because request "
-            "counts start at zero each time, the app can't keep you under Mars Vista's hourly and daily limits "
-            "across restarts, and refused photos are tried again each run. Downloaded photos are always kept.",
+            "photos unavailable at NASA live in a temporary folder that's deleted when the app closes. Because "
+            "request counts start at zero each time, the app can't keep you under Mars Vista's hourly and daily "
+            "limits across restarts, and photos unavailable at NASA are tried again each run. Downloaded photos "
+            "are always kept.",
             "muted", wrap=True)
         self.nokeep_note.setProperty("tone", "warn")
         lay.addWidget(self.nokeep_note)
         self.photo_edit = self.photo_free = None
         if first_run:
             self.photo_edit, self.photo_free, _ = self._folder_row(
-                lay, "Photo folder (optional)",
+                lay, "Photo Folder (Optional)",
                 "Where photos are saved. All four rovers come to several hundred gigabytes. You can also choose "
                 "or change this later in the main window.", "")
         self.has_old = has_old = any(os.path.isfile(os.path.join(self.old_dir, n)) for n in APP_DATA_FILES)
-        self.copy_box = QCheckBox(f"Copy my existing app data from {self.old_dir}")
+        self.copy_box = QCheckBox("Copy Existing App Data")
         self.copy_box.setChecked(True)
-        self.copy_box.setToolTip("Copies settings, scan results, request counts and refused photos. The originals "
-                                 "are left where they are.")
+        self.copy_box.setToolTip("Copies settings, scan results, request counts and the list of photos unavailable "
+                                 "at NASA. The originals are left where they are.")
         self.copy_box.setVisible(has_old)
         lay.addWidget(self.copy_box)
+        self.copy_from = label(f"From {self.old_dir}", "muted", wrap=True)     # the path, below its check box
+        self.copy_from.setContentsMargins(26, 0, 0, 0)
+        self.copy_from.setVisible(has_old)
+        lay.addWidget(self.copy_from)
         info = [f"The program itself runs from {program_location()}.",
                 f"Your Mars Vista API key is kept in {KEY_STORE}, not in a file."]
         if getattr(sys, "frozen", False) and os.name == "nt":       # the single .exe; an AppImage doesn't unpack
@@ -674,7 +686,7 @@ class SetupDialog(QDialog):
                         "90 MB); that copy is removed when it closes.")
         lay.addWidget(label(" ".join(info), "muted", wrap=True))
         bb = QDialogButtonBox()
-        ok = bb.addButton("Continue" if first_run else "Save and restart", QDialogButtonBox.ButtonRole.AcceptRole)
+        ok = bb.addButton("Continue" if first_run else "Save and Restart", QDialogButtonBox.ButtonRole.AcceptRole)
         ok.setObjectName("primary")
         bb.addButton("Quit" if first_run else "Cancel", QDialogButtonBox.ButtonRole.RejectRole)
         bb.accepted.connect(self._accept)
@@ -700,7 +712,7 @@ class SetupDialog(QDialog):
 
     def _browse(self, edit: QLineEdit) -> None:
         start = edit.text().strip() or os.path.expanduser("~")
-        folder = QFileDialog.getExistingDirectory(self, "Choose folder", start)
+        folder = QFileDialog.getExistingDirectory(self, "Choose Folder", start)
         if folder:
             edit.setText(os.path.normpath(folder))
 
@@ -718,6 +730,8 @@ class SetupDialog(QDialog):
         same = os.path.normcase(self.data_dir()) == os.path.normcase(os.path.abspath(self.old_dir))
         self.copy_box.setVisible(self.has_old and not nokeep)
         self.copy_box.setEnabled(not same)
+        self.copy_from.setVisible(self.has_old and not nokeep)
+        self.copy_from.setEnabled(not same)
 
     def keep_nothing(self) -> bool:
         return self.nokeep_box.isChecked()
@@ -735,12 +749,12 @@ class SetupDialog(QDialog):
             self.accept()
             return
         if not self.data_edit.text().strip():
-            QMessageBox.warning(self, "No folder", "Choose a folder for the app's data.")
+            QMessageBox.warning(self, "No Folder", "Choose a folder for the app's data.")
             return
         try:
             os.makedirs(self.data_dir(), exist_ok=True)
         except OSError as e:
-            QMessageBox.warning(self, "Couldn't use this folder", f"{self.data_dir()}\n\n{e}")
+            QMessageBox.warning(self, "Couldn't Use the Folder", f"{self.data_dir()}\n\n{e}")
             return
         self.accept()
 
@@ -814,7 +828,7 @@ class MainWindow(QMainWindow):
         self._validate()
         if not keeps_app_data():
             self._log("App data isn't kept between launches; settings and counts start fresh each time "
-                      "(File > Settings > Change app data folder to keep them).")
+                      "(File > Settings > Change App Data Folder to keep them).")
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
@@ -920,7 +934,7 @@ class MainWindow(QMainWindow):
         outer.addWidget(bottom)
 
     def _build_folder_card(self) -> None:
-        frame, lay = card("Photo folder")
+        frame, lay = card("Photo Folder")
         row = QHBoxLayout()
         self.folder_edit = QLineEdit()
         self.folder_edit.setPlaceholderText("Choose where photos are saved")
@@ -930,13 +944,13 @@ class MainWindow(QMainWindow):
         browse.clicked.connect(self._browse)
         row.addWidget(browse)
         lay.addLayout(row)
-        self.folder_hint = label("This folder doesn't exist yet. Start, Quick scan, Full check or Open folder "
+        self.folder_hint = label("This folder doesn't exist yet. Start, Quick Scan, Full Check or Open Folder "
                                  "will offer to create it.", "muted", wrap=True)
         self.folder_hint.setProperty("tone", "warn")
         self.folder_hint.setVisible(False)
         lay.addWidget(self.folder_hint)
         row2 = QHBoxLayout()
-        self.open_btn = link_button("Open folder")
+        self.open_btn = link_button("Open Folder")
         self.open_btn.clicked.connect(self._open_folder)
         row2.addWidget(self.open_btn)
         row2.addStretch()
@@ -945,7 +959,7 @@ class MainWindow(QMainWindow):
         self.left_col.addWidget(frame)
 
     def _build_key_card(self) -> None:
-        frame, lay = card("API key")
+        frame, lay = card("API Key")
         row = QHBoxLayout()
         self.key_edit = QLineEdit()
         self.key_edit.setEchoMode(QLineEdit.EchoMode.Password)
@@ -960,10 +974,10 @@ class MainWindow(QMainWindow):
             self.show_key.setText("Hide" if on else "Show")))
         row.addWidget(self.show_key)
         lay.addLayout(row)
-        hint = label('Get a free key at <a href="https://marsvista.dev">marsvista.dev</a>. '
-                     f"Saved in {KEY_STORE}.", "muted", wrap=True)
-        hint.setOpenExternalLinks(True)
-        lay.addWidget(hint)
+        self.key_hint = label("", "muted", wrap=True)
+        self.key_hint.setOpenExternalLinks(True)
+        self._color_links(DARK)
+        lay.addWidget(self.key_hint)
         self.locked += [self.key_edit]
         self.left_col.addWidget(frame)
 
@@ -1004,7 +1018,7 @@ class MainWindow(QMainWindow):
 
     def _build_options_card(self) -> None:
         frame, lay = card("Options")
-        self.check_existing = QCheckBox("Check existing sols for missing photos")
+        self.check_existing = QCheckBox("Check Existing Sols for Missing Photos")
         self.check_existing.setToolTip("On: start at sol 0 and fill gaps in sols you already have (slower).\n"
                                        "Off: only download sols after the last one in the folder.")
         lay.addWidget(self.check_existing)
@@ -1013,18 +1027,18 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         row.addWidget(label("Sols"))
         self.sol_from, self.sol_to = QLineEdit(), QLineEdit()
-        for edit, hint in ((self.sol_from, "from"), (self.sol_to, "to")):
+        for edit, hint in ((self.sol_from, "From"), (self.sol_to, "To")):
             edit.setPlaceholderText(hint)
             edit.setValidator(QIntValidator(0, 100000))
             edit.setFixedWidth(80)
         row.addWidget(self.sol_from)
-        row.addWidget(label("to", "muted"))
+        row.addWidget(label("–", "muted"))
         row.addWidget(self.sol_to)
         row.addStretch()
         lay.addLayout(row)
         lay.addWidget(label("Leave blank for all sols.", "muted"))
         lim = QHBoxLayout()
-        self.limit_box = QCheckBox("Limit downloads to")
+        self.limit_box = QCheckBox("Limit Downloads")
         self.limit_box.setToolTip("Download at most this many photos in any rolling minute, hour or day. When the "
                                   "limit is reached the download waits, then continues by itself.")
         self.limit_box.toggled.connect(self._validate)
@@ -1034,13 +1048,14 @@ class MainWindow(QMainWindow):
         self.limit_files.setFixedWidth(95)
         self.limit_files.editingFinished.connect(lambda: self.limit_files.setText(str(self._limit_value())))
         self.limit_period = QComboBox()
-        self.limit_period.addItems(list(PERIODS))
+        for period in PERIODS:                    # shown in title case; the saved value stays "minute" / "hour" / "day"
+            self.limit_period.addItem(f"Per {period.title()}", period)
         # Both stay editable; typing a number or choosing a period turns the limit on (the box turns it off).
         self.limit_files.textEdited.connect(lambda _text: self.limit_box.setChecked(True))
         self.limit_period.activated.connect(lambda _index: self.limit_box.setChecked(True))
         lim.addWidget(self.limit_box)
         lim.addWidget(self.limit_files)
-        lim.addWidget(label("photos per"))
+        lim.addWidget(label("Photos"))
         lim.addWidget(self.limit_period)
         lim.addStretch()
         lay.addLayout(lim)
@@ -1050,7 +1065,7 @@ class MainWindow(QMainWindow):
         self.adv = QWidget()
         al = QHBoxLayout(self.adv)
         al.setContentsMargins(0, 0, 0, 0)
-        al.addWidget(label("Parallel downloads"))
+        al.addWidget(label("Parallel Downloads"))
         self.workers = NumberChoice(1, 16)       # a dropdown: the style sheet hides a spin box's arrow buttons
         al.addWidget(self.workers)
         al.addStretch()
@@ -1073,7 +1088,7 @@ class MainWindow(QMainWindow):
         head.addWidget(self.scanned_label)
         lay.addLayout(head)
         self.outdated_note = label("These numbers were counted before your last download, so they don't include "
-                                   "the photos it added. Click Quick scan to update them.", "muted", wrap=True)
+                                   "the photos it added. Click Quick Scan to update them.", "muted", wrap=True)
         self.outdated_note.setProperty("tone", "warn")
         self.outdated_note.setVisible(False)
         lay.addWidget(self.outdated_note)
@@ -1082,7 +1097,7 @@ class MainWindow(QMainWindow):
         grid.setVerticalSpacing(5)
         # Two groups, so what's in the folder isn't confused with what Mars Vista has.
         sections = [("ON DISK", ["Sols", "Photos", "Size"]),
-                    ("AVAILABLE ONLINE", ["Latest sol", "To download", "Gaps in your sols"])]
+                    ("AVAILABLE ONLINE", ["Latest Sol", "To Download", "Gaps in Existing Sols"])]
         self.lib_rows = [row for _, rows in sections for row in rows]
         self.lib_cells: dict[tuple[str, str], QLabel] = {}
         self.lib_heads: dict[str, QLabel] = {}
@@ -1092,7 +1107,7 @@ class MainWindow(QMainWindow):
         tip = ("Only sols that have photos are counted. Sol numbers count every Mars day since landing, but on some "
                "days the rover sent back no images (for example during solar conjunction, when the Sun blocks "
                "communication with Earth).")
-        # Shown on the "To download" row, to the right of the last rover column.
+        # Shown on the "To Download" row, to the right of the last rover column.
         self.lib_note = label("Not every sol has photos, so this can be fewer than the latest sol.", "muted",
                               wrap=True, min_width=170)
         self.lib_note.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
@@ -1108,7 +1123,7 @@ class MainWindow(QMainWindow):
                     cell = label("N/A", "value")
                     self.lib_cells[(row_name, rover)] = cell
                     grid.addWidget(cell, r, c)
-                if row_name == "To download":
+                if row_name == "To Download":
                     # spans this row and the next, so the wrapped note doesn't stretch one row
                     grid.addWidget(self.lib_note, r, note_col, 2, 1, Qt.AlignmentFlag.AlignTop)
                     for rover in ALL_ROVERS:
@@ -1116,14 +1131,14 @@ class MainWindow(QMainWindow):
                 r += 1
         grid.setColumnStretch(note_col, 1)
         lay.addLayout(grid)
-        self.lib_hint = label("Click Quick scan to check this folder.", "muted")
+        self.lib_hint = label("Click Quick Scan to check this folder.", "muted")
         lay.addWidget(self.lib_hint)
         btns = QHBoxLayout()
         btns.addStretch()
-        self.quick_btn = QPushButton("Quick scan")
+        self.quick_btn = QPushButton("Quick Scan")
         self.quick_btn.setToolTip("Count what's on disk and compare with Mars Vista (2 API requests)")
         self.quick_btn.clicked.connect(self._quick_scan)
-        self.full_btn = QPushButton("Full check…")
+        self.full_btn = QPushButton("Full Check…")
         self.full_btn.setToolTip("Also find gaps in existing sols (about one API request per sol on disk)")
         self.full_btn.clicked.connect(self._full_check)
         btns.addWidget(self.quick_btn)
@@ -1145,19 +1160,22 @@ class MainWindow(QMainWindow):
         grid.setVerticalSpacing(4)
         self.counters: dict[str, QLabel] = {}
         self.counter_heads: dict[str, QLabel] = {}
-        items = [("Photos downloaded", 0, 0), ("Already had", 0, 2),
-                 ("Data downloaded", 1, 0), ("Speed", 1, 2),
-                 ("Photo rate", 2, 0), ("Average speed", 2, 2),
+        items = [("Photos Downloaded", 0, 0), ("Already Had", 0, 2),
+                 ("Data Downloaded", 1, 0), ("Speed", 1, 2),
+                 ("Photo Rate", 2, 0), ("Average Speed", 2, 2),
                  ("Unavailable at NASA", 3, 0), ("Errors", 3, 2),
-                 ("Time left", 4, 0), ("Elapsed", 4, 2)]
-        tips = {"Data downloaded": "Size of the photos saved to the folder in this run.",
-                "Speed": "Download speed, averaged over a recent window (View > Speed averaged over).",
-                "Average speed": "Average download speed since the run started, including waits.",
-                "Photo rate": "Photos saved per second over the same window as Speed.",
-                "Already had": "Photos that were already in the folder: in sols that were already complete, or "
+                 ("Time Left", 4, 0), ("Elapsed", 4, 2)]
+        tips = {"Data Downloaded": "Size of the photos saved to the folder in this run.",
+                "Speed": "Download speed, averaged over a recent window (View > Units > Speed Averaged Over).",
+                "Average Speed": "Average download speed since the run started, including waits.",
+                "Photo Rate": "Photos saved per second over the same window as Speed.",
+                "Already Had": "Photos that were already in the folder: in sols that were already complete, or "
                                "found while filling in a sol.",
-                "Unavailable at NASA": "Photos NASA's image servers refuse to send (HTTP 403/404), usually older images NASA no longer serves. They can't be downloaded, so they're remembered and skipped on later runs instead of counting as missing. Download > Retry photos NASA refused tries them all again.",
-                "Time left": "Estimated from how fast sols went by over the last two minutes, so it changes when "
+                "Unavailable at NASA": "Photos NASA's image servers won't send (HTTP 403/404), usually older images "
+                                       "NASA no longer serves. They can't be downloaded, so they're remembered and "
+                                       "skipped on later runs instead of counting as missing. Download > Retry "
+                                       "Photos Unavailable at NASA tries them all again.",
+                "Time Left": "Estimated from how fast sols went by over the last two minutes, so it changes when "
                              "the download moves from sols you already have to new ones."}
         for name, r, c in items:
             head = label(name, "rowHead")
@@ -1176,7 +1194,7 @@ class MainWindow(QMainWindow):
         self.summary = label("", wrap=True)
         self.summary.setVisible(False)
         srow.addWidget(self.summary, 1)
-        self.problems_btn = link_button("Show problems")
+        self.problems_btn = link_button("Show Problems")
         self.problems_btn.setVisible(False)
         self.problems_btn.clicked.connect(self._show_problems)
         srow.addWidget(self.problems_btn)
@@ -1184,12 +1202,12 @@ class MainWindow(QMainWindow):
         return frame
 
     def _build_usage_card(self) -> QFrame:
-        frame, lay = card("Mars Vista API usage (estimated)")
+        frame, lay = card("Mars Vista API Usage (Estimated)")
         grid = QGridLayout()
         grid.setHorizontalSpacing(12)
         self.hour_bar, self.day_bar = meter(), meter()
         self.hour_lbl, self.day_lbl = label("", "value"), label("", "value")
-        for r, (name, bar, lbl) in enumerate((("This hour", self.hour_bar, self.hour_lbl),
+        for r, (name, bar, lbl) in enumerate((("This Hour", self.hour_bar, self.hour_lbl),
                                               ("Today", self.day_bar, self.day_lbl))):
             grid.addWidget(label(name, "rowHead"), r, 0)
             grid.addWidget(bar, r, 1)
@@ -1200,7 +1218,7 @@ class MainWindow(QMainWindow):
         lay.addLayout(grid)
         # Spirit and Opportunity come from NASA's archive, which has no quota, so it gets a count, not a meter.
         nasa = QHBoxLayout()
-        nasa.addWidget(label("NASA archive", "rowHead"))
+        nasa.addWidget(label("NASA Archive", "rowHead"))
         nasa.addStretch()
         self.pds_lbl = label("", "value")
         nasa.addWidget(self.pds_lbl)
@@ -1321,7 +1339,8 @@ class MainWindow(QMainWindow):
         self.workers.setValue(s.workers)
         self.limit_box.setChecked(s.limit_on)
         self.limit_files.setText(str(max(1, s.limit_files)))
-        self.limit_period.setCurrentText(s.limit_period if s.limit_period in PERIODS else "hour")
+        self.limit_period.setCurrentIndex(self.limit_period.findData(s.limit_period if s.limit_period in PERIODS
+                                                                     else "hour"))
         self._loading = False
         self._update_camera_toggles()
         self._update_library_columns()
@@ -1343,7 +1362,7 @@ class MainWindow(QMainWindow):
         s.sol_from, s.sol_to = self.sol_from.text().strip(), self.sol_to.text().strip()
         s.workers = self.workers.value()
         s.limit_on = self.limit_box.isChecked()
-        s.limit_files, s.limit_period = self._limit_value(), self.limit_period.currentText()
+        s.limit_files, s.limit_period = self._limit_value(), self.limit_period.currentData()
 
     def _save_settings(self) -> None:
         self._collect_settings()
@@ -1417,6 +1436,7 @@ class MainWindow(QMainWindow):
         if mode != "idle":
             self.cancel = threading.Event()
         self._validate()
+        self._apply_opacity()
 
     # ---- background tasks --------------------------------------------------------------------------------
 
@@ -1474,7 +1494,7 @@ class MainWindow(QMainWindow):
     # ---- actions -----------------------------------------------------------------------------------------
 
     def _browse(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Choose photo folder", self._folder() or os.path.expanduser("~"))
+        folder = QFileDialog.getExistingDirectory(self, "Choose Photo Folder",self._folder() or os.path.expanduser("~"))
         if folder:
             self.folder_edit.setText(os.path.normpath(folder))
 
@@ -1533,7 +1553,7 @@ class MainWindow(QMainWindow):
             panel = self.camera_panels[name]
             arrow = "▾" if panel.isVisible() else "▸"
             on, total = panel.counts()
-            toggle.setText(f"Cameras {arrow}  ({on} of {total})" if total else f"Cameras {arrow}  (loading…)")
+            toggle.setText(f"Cameras {arrow}  ({on} of {total})" if total else f"Cameras {arrow}  (Loading…)")
 
     def _toggle_advanced(self) -> None:
         self.adv.setVisible(not self.adv.isVisible())
@@ -1559,7 +1579,7 @@ class MainWindow(QMainWindow):
         self.activity_card.setSizePolicy(QSizePolicy.Policy.Preferred,
                                          QSizePolicy.Policy.Preferred if visible else QSizePolicy.Policy.Maximum)
         self.log_toggle.setText("Hide ▾" if visible else "Show ▴")
-        self.log_toggle.setToolTip("" if visible else "Show the activity log (also under View > Show activity log)")
+        self.log_toggle.setToolTip("" if visible else "Show the activity log (also under View > Show Activity Log)")
         if hasattr(self, "act_log") and self.act_log.isChecked() != visible:
             self.act_log.setChecked(visible)
         self.settings.show_log = visible
@@ -1575,10 +1595,10 @@ class MainWindow(QMainWindow):
         view_m = mb.addMenu("&View")
         help_m = mb.addMenu("&Help")
 
-        self.act_choose = file_m.addAction("Choose photo folder…")
+        self.act_choose = file_m.addAction("Choose Photo Folder…")
         self.act_choose.setShortcut(QKeySequence("Ctrl+O"))
         self.act_choose.triggered.connect(self._browse)
-        open_act = file_m.addAction("Open photo folder")
+        open_act = file_m.addAction("Open Photo Folder")
         open_act.triggered.connect(self._open_folder)
         file_m.addSeparator()
         settings_m = file_m.addMenu("&Settings")          # File > Settings (filled in below)
@@ -1591,7 +1611,7 @@ class MainWindow(QMainWindow):
         download_m.setToolTipsVisible(True)
         self.button_actions = []
         for item in ((self.start_btn, "Start"), (self.pause_btn, "Pause"), (self.stop_btn, "Stop"), None,
-                     (self.quick_btn, "Quick scan"), (self.full_btn, "Full check…"), (self.preview_btn, "Preview")):
+                     (self.quick_btn, "Quick Scan"), (self.full_btn, "Full Check…"), (self.preview_btn, "Preview")):
             if item is None:
                 download_m.addSeparator()
                 continue
@@ -1601,51 +1621,57 @@ class MainWindow(QMainWindow):
             self.button_actions.append((act, button))
         download_m.aboutToShow.connect(self._sync_button_actions)
         download_m.addSeparator()
-        self.act_retry = download_m.addAction("Retry photos NASA refused (next run)")
+        self.act_retry = download_m.addAction("Retry Photos Unavailable at NASA (Next Run)")
         self.act_retry.setCheckable(True)
-        self.act_retry.setToolTip("Photos NASA refused (HTTP 403/404) are normally skipped on later runs. "
-                                  "Tick this to try them all again on the next run.")
+        self.act_retry.setToolTip("Photos NASA's servers won't send (HTTP 403/404) are normally skipped on later "
+                                  "runs. Tick this to try them all again on the next run.")
 
-        theme_options = [("Match operating system", "system")]
-        theme_options += [(g, sorted(((name, key) for group, name, key, _ in THEMES if group == g),
-                                     key=lambda choice: choice[0].casefold())) for g in THEME_GROUPS]
-        self._choice_menu(view_m, "Theme", theme_options, "theme", after=self._apply_theme)
+        # The groups first (the entries that open a list), each sorted alphabetically, then Match Operating System
+        theme_options = [(g, sorted(((name, key) for group, name, key, _ in THEMES if group == g),
+                                    key=lambda choice: choice[0].casefold())) for g in THEME_GROUPS]
+        theme_options += [("Match Operating System", "system")]
+        theme_m = self._choice_menu(view_m, "Theme", theme_options, "theme", after=self._apply_theme)
         # Hovering a theme previews it; clicking keeps it; closing the menu otherwise puts the chosen one back.
         self.theme_previewing: str | None = None
         self.theme_preview_timer = QTimer(self, singleShot=True, interval=90)   # skip themes passed over quickly
         self.theme_preview_timer.timeout.connect(self._show_theme_preview)
+        theme_acts = [act for _, act in self.choice_actions["theme"]]
         for value, act in self.choice_actions["theme"]:
             act.hovered.connect(lambda v=value: self._preview_theme(v))
+        # A theme shows only while the pointer is on its own entry: on a group's name ("Dark Themes") the saved
+        # theme shows again, instead of the last theme the pointer passed over.
+        theme_m.hovered.connect(lambda act: self._theme_menu_hovered(act, theme_acts))
         view_m.aboutToHide.connect(self._end_theme_preview)
         units_m = view_m.addMenu("Units")
         self._choice_menu(units_m, "Data", [("Auto", "auto"), ("KB", "KB"), ("MB", "MB"), ("GB", "GB"),
                                             ("TB", "TB")], "data_unit")
         self._choice_menu(units_m, "Speed", [("Auto", "auto"), ("KB/s", "KB/s"), ("MB/s", "MB/s"),
                                              ("Mbit/s", "Mbit/s")], "speed_unit")
-        self._choice_menu(units_m, "Speed averaged over", [(f"{n} seconds", n) for n in SPEED_WINDOWS],
+        self._choice_menu(units_m, "Speed Averaged Over", [(f"{n} Seconds", n) for n in SPEED_WINDOWS],
                           "speed_window")
         view_m.addSeparator()
-        self.act_log = view_m.addAction("Show activity log")
+        self.act_log = view_m.addAction("Show Activity Log")
         self.act_log.setCheckable(True)
         self.act_log.setChecked(self.settings.show_log)
         self.act_log.toggled.connect(self._set_log_visible)
-        self.act_verbose = view_m.addAction("Detailed activity log")
+        self.act_verbose = view_m.addAction("Detailed Activity Log")
         self.act_verbose.setCheckable(True)
         self.act_verbose.setChecked(self.settings.verbose_log)
         self.act_verbose.setToolTip("Also log every sol checked and every photo saved or skipped.")
         self.act_verbose.toggled.connect(self._set_verbose)
+        self._build_opacity_menu(view_m.addMenu("Window Opacity"))
         view_m.addSeparator()
-        view_m.addAction("Reset view options").triggered.connect(self._reset_view)
+        view_m.addAction("Reset View Options").triggered.connect(self._reset_view)
 
-        self.act_move_data = settings_m.addAction("Change app data folder…")
+        self.act_move_data = settings_m.addAction("Change App Data Folder…")
         self.act_move_data.triggered.connect(self._change_data_folder)
         settings_m.addSeparator()
-        settings_m.addAction("Reset settings to defaults…").triggered.connect(self._reset_settings)
+        settings_m.addAction("Reset Settings to Defaults…").triggered.connect(self._reset_settings)
 
-        site = help_m.addAction("Mars Vista website")
+        site = help_m.addAction("Mars Vista Website")
         site.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://marsvista.dev")))
-        help_m.addAction("Open app data folder").triggered.connect(self._open_settings_folder)
-        help_m.addAction("Report a problem").triggered.connect(lambda: QDesktopServices.openUrl(
+        help_m.addAction("Open App Data Folder").triggered.connect(self._open_settings_folder)
+        help_m.addAction("Report a Problem").triggered.connect(lambda: QDesktopServices.openUrl(
             QUrl("https://github.com/cincottash/RoverImageScraper/issues")))
         help_m.addSeparator()
         about = help_m.addAction("About Rover Image Scraper")
@@ -1657,8 +1683,8 @@ class MainWindow(QMainWindow):
             act.setEnabled(button.isEnabled() and button.isVisible())
             act.setText(button.text().replace("▶", "").strip())
 
-    def _choice_menu(self, parent, title: str, options: list, attr: str, after=None) -> None:
-        """A submenu of mutually exclusive choices stored in self.settings.<attr>."""
+    def _choice_menu(self, parent, title: str, options: list, attr: str, after=None) -> QMenu:
+        """A submenu of mutually exclusive choices stored in self.settings.<attr>. Returns the submenu."""
         menu = parent.addMenu(title)
         group = QActionGroup(menu)
         group.setExclusive(True)
@@ -1681,17 +1707,92 @@ class MainWindow(QMainWindow):
             group.addAction(act)
             act.triggered.connect(lambda _=False, v=value: self._set_view_option(attr, v, after))
             self.choice_actions.setdefault(attr, []).append((value, act))
+        return menu
 
-    # View menu choices, and the download options in the left column (File > Settings > Reset settings to defaults).
-    VIEW_FIELDS = ("data_unit", "speed_unit", "speed_window", "theme", "show_log", "collapsed_cards")
+    def _build_opacity_menu(self, menu: QMenu) -> None:
+        """View > Window Opacity: one slider (the window changes as it moves) and one option."""
+        row = QWidget()
+        row.setObjectName("menuRow")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(26, 5, 14, 5)
+        h.setSpacing(10)
+        h.addWidget(QLabel("Opacity"))
+        self.opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.opacity_slider.setRange(OPACITY_MIN, 100)
+        self.opacity_slider.setSingleStep(5)
+        self.opacity_slider.setPageStep(10)
+        self.opacity_slider.setMinimumWidth(170)
+        self.opacity_slider.setValue(self.settings.window_opacity)
+        h.addWidget(self.opacity_slider, 1)
+        self.opacity_value = QLabel(f"{self.settings.window_opacity} %")
+        self.opacity_value.setMinimumWidth(self.opacity_value.fontMetrics().horizontalAdvance("100 %") + 4)
+        self.opacity_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        h.addWidget(self.opacity_value)
+        slider_act = QWidgetAction(menu)
+        slider_act.setDefaultWidget(row)
+        menu.addAction(slider_act)
+        self.act_opacity_busy = menu.addAction("Only While Downloading or Scanning")
+        self.act_opacity_busy.setCheckable(True)
+        self.act_opacity_busy.setChecked(self.settings.opacity_only_while_busy)
+        self.act_opacity_busy.toggled.connect(self._set_opacity_busy)
+        # After the slider moves, its level shows for a moment even when it only applies while busy.
+        self.previewing_opacity = False
+        self.opacity_preview_timer = QTimer(self, singleShot=True, interval=1200)
+        self.opacity_preview_timer.timeout.connect(self._end_opacity_preview)
+        self.opacity_slider.sliderReleased.connect(self.opacity_preview_timer.start)
+        self.opacity_slider.valueChanged.connect(self._opacity_moved)
+        self._apply_opacity()
+
+    def _opacity_moved(self, value: int) -> None:
+        self.settings.window_opacity = value
+        self.opacity_value.setText(f"{value} %")
+        s = self.opacity_slider
+        if s.isSliderDown() or s.hasFocus() or s.underMouse():       # moved by hand, not by Reset View Options
+            self.previewing_opacity = True
+            self.opacity_preview_timer.start()
+        self._apply_opacity()
+        self._save_settings()
+
+    def _end_opacity_preview(self) -> None:
+        if self.opacity_slider.isSliderDown():          # still held: keep showing it until released
+            return
+        self.previewing_opacity = False
+        self._apply_opacity()
+
+    def _set_opacity_busy(self, on: bool) -> None:
+        self.settings.opacity_only_while_busy = on
+        self._apply_opacity()
+        self._save_settings()
+
+    def _apply_opacity(self) -> None:
+        """The window's opacity from View > Window Opacity. With "Only While Downloading or Scanning" on, the
+        window is solid unless a download or scan is running (or the slider is being moved, to show the level)."""
+        if not hasattr(self, "opacity_slider"):
+            return
+        busy = self.mode in ("download", "scan", "full")
+        solid = self.settings.opacity_only_while_busy and not busy and not self.previewing_opacity
+        level = 1.0 if solid else self.settings.window_opacity / 100
+        if abs(self.windowOpacity() - level) > 0.005:
+            self.setWindowOpacity(level)
+
+    def _theme_menu_hovered(self, act, theme_acts: list) -> None:
+        """The pointer is on something in View > Theme that isn't a theme (a group's name): show the saved theme
+        again if another one is being previewed. Nothing is restyled when no preview is active."""
+        if act in theme_acts or self.theme_previewing is None or self.theme_previewing == self.settings.theme:
+            return
+        self._preview_theme(self.settings.theme)
+
+    # View menu choices, and the download options in the left column (File > Settings > Reset Settings to Defaults).
+    VIEW_FIELDS = ("data_unit", "speed_unit", "speed_window", "theme", "show_log", "collapsed_cards",
+                   "window_opacity", "opacity_only_while_busy")
     OPTION_FIELDS = ("rovers", "excluded_cameras", "check_existing", "sol_from", "sol_to", "workers", "limit_on",
                      "limit_files", "limit_period")
 
     def _reset_view(self) -> None:
         answer = QMessageBox.question(
-            self, "Reset view options?",
-            "Put data and speed units, speed averaging, theme, the activity log and folded cards back to their "
-            "defaults?")
+            self, "Reset View Options?",
+            "Put data and speed units, speed averaging, theme, the activity log, folded cards and window opacity "
+            "back to their defaults?")
         if answer != QMessageBox.StandardButton.Yes:
             return
         defaults = Settings()
@@ -1700,6 +1801,11 @@ class MainWindow(QMainWindow):
         self._sync_choice_checks()
         self._set_log_visible(self.settings.show_log)
         self._apply_folded_cards()
+        self.opacity_slider.setValue(self.settings.window_opacity)     # also updates the value beside it
+        self.act_opacity_busy.blockSignals(True)
+        self.act_opacity_busy.setChecked(self.settings.opacity_only_while_busy)
+        self.act_opacity_busy.blockSignals(False)
+        self._apply_opacity()
         self._apply_theme()
         self._update_counters()
         self._save_settings()
@@ -1710,9 +1816,9 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Busy", "Stop the current task before resetting settings.")
             return
         answer = QMessageBox.question(
-            self, "Reset settings to defaults?",
-            "Reset rovers, cameras, \"Check existing sols\", the sol range, parallel downloads, the download "
-            "limit and \"Retry photos NASA refused\" to their defaults?\n\n"
+            self, "Reset Settings to Defaults?",
+            "Reset rovers, cameras, \"Check Existing Sols for Missing Photos\", the sol range, parallel downloads, "
+            "the download limit and \"Retry Photos Unavailable at NASA\" to their defaults?\n\n"
             "Kept as they are: the photo folder, the API key, the app data folder, scan results and request "
             "counts. View options have their own reset under View.")
         if answer != QMessageBox.StandardButton.Yes:
@@ -1752,6 +1858,13 @@ class MainWindow(QMainWindow):
         if key is not None:
             colors = THEME_COLORS.get(key) or (DARK if system_is_dark(self.app) else LIGHT)
             apply_theme(self.app, colors, only=self.centralWidget())
+            self._color_links(colors)
+
+    def _color_links(self, colors: dict) -> None:
+        """Links in labels take the theme's accent color. Qt draws them in its default dark blue otherwise, which
+        is hard to read on dark themes."""
+        self.key_hint.setText(f'Get a free key at <a href="https://marsvista.dev"><span style="color:{colors["accent"]}">'
+                              f'marsvista.dev</span></a>. Saved in {KEY_STORE}.')
 
     def _end_theme_preview(self) -> None:
         """The View menu closed. After a click the new theme is already saved; otherwise this restores the saved
@@ -1768,9 +1881,11 @@ class MainWindow(QMainWindow):
             central.setPalette(QPalette())
         choice = choice or self.settings.theme
         if choice in THEME_COLORS:
-            apply_theme(self.app, THEME_COLORS[choice])
+            colors = THEME_COLORS[choice]
         else:            # "system", or a theme this version doesn't have
-            apply_theme(self.app, DARK if system_is_dark(self.app) else LIGHT)
+            colors = DARK if system_is_dark(self.app) else LIGHT
+        apply_theme(self.app, colors)
+        self._color_links(colors)
 
     def _open_settings_folder(self) -> None:
         os.makedirs(STATE_DIR, exist_ok=True)
@@ -1831,7 +1946,7 @@ class MainWindow(QMainWindow):
         if not self.limit_box.isChecked():
             self.limiter = None
             return None
-        n, period = self._limit_value(), self.limit_period.currentText()
+        n, period = self._limit_value(), self.limit_period.currentData()
         if self.limiter is None:
             self.limiter = FileLimiter(n, PERIODS[period], cancelled_error=Cancelled)
         else:            # change the numbers in place, so photos already counted still count
@@ -1842,6 +1957,8 @@ class MainWindow(QMainWindow):
     def _live_change(self) -> None:
         """Parallel downloads or the download limit changed. During a download the new values apply from the next
         camera folder (and the limit at once); otherwise they're simply used by the next run."""
+        if self._loading:          # settings being put into the widgets: saving now would store half-loaded values
+            return
         self._save_settings()
         scraper = self.active_scraper
         if self.mode != "download" or scraper is None:
@@ -1864,21 +1981,21 @@ class MainWindow(QMainWindow):
         """True if the photo folder exists, or the user agreed to create it and it was created."""
         folder = folder or self._folder()
         if not folder:
-            QMessageBox.warning(self, "No photo folder", "Choose a folder to save photos in first.")
+            QMessageBox.warning(self, "No Photo Folder", "Choose a folder to save photos in first.")
             return False
         if os.path.isdir(folder):
             return True
         if os.path.exists(folder):
-            QMessageBox.warning(self, "Not a folder", f"{folder}\n\nThis path is a file, not a folder.")
+            QMessageBox.warning(self, "Not a Folder", f"{folder}\n\nThis path is a file, not a folder.")
             return False
-        answer = QMessageBox.question(self, "Create folder?",
+        answer = QMessageBox.question(self, "Create Folder?",
                                       f"{folder}\n\nThis folder doesn't exist. Create it?")
         if answer != QMessageBox.StandardButton.Yes:
             return False
         try:
             os.makedirs(folder)
         except OSError as e:
-            QMessageBox.warning(self, "Couldn't create the folder", f"{folder}\n\n{e}")
+            QMessageBox.warning(self, "Couldn't Create the Folder", f"{folder}\n\n{e}")
             return False
         self._log(f"Created folder {folder}")
         self._validate()
@@ -1921,7 +2038,7 @@ class MainWindow(QMainWindow):
         if not has_data or folder in self.settings.confirmed_folders:
             return True
         answer = QMessageBox.question(
-            self, "Folder already has photos",
+            self, "Folder Already Has Photos",
             "This folder already contains rover photos.\n\nOnly missing photos will be added. Existing files are "
             "never overwritten, renamed or deleted.\n\nContinue?")
         if answer == QMessageBox.StandardButton.Yes:
@@ -1944,13 +2061,13 @@ class MainWindow(QMainWindow):
         if cp:
             if cp["params"] != self._run_params():
                 box = QMessageBox(self)
-                box.setWindowTitle("Paused download")
+                box.setWindowTitle("Paused Download")
                 box.setText(f"You have a paused download ({cp['rover']} sol {cp['sol']:,}).\n\nYour choices have "
                             f"changed since it was paused. Resume it with its original choices, or start a new "
                             f"download with the current ones? (Starting new discards the paused position; "
                             f"downloaded photos are kept.)")
-                resume_btn = box.addButton("Resume paused", QMessageBox.ButtonRole.AcceptRole)
-                new_btn = box.addButton("Start new", QMessageBox.ButtonRole.DestructiveRole)
+                resume_btn = box.addButton("Resume Paused", QMessageBox.ButtonRole.AcceptRole)
+                new_btn = box.addButton("Start New", QMessageBox.ButtonRole.DestructiveRole)
                 box.addButton(QMessageBox.StandardButton.Cancel)
                 box.exec()
                 if box.clickedButton() is new_btn:
@@ -1973,7 +2090,8 @@ class MainWindow(QMainWindow):
         retry_refused = self.act_retry.isChecked()
         if retry_refused:
             self.act_retry.setChecked(False)      # one run only
-            self._log("Retrying photos NASA refused before (Download > Retry photos NASA refused).")
+            self._log("Retrying photos that were unavailable at NASA before "
+                      "(Download > Retry Photos Unavailable at NASA).")
         self.report = Report()
         report = self.report
         self.summary.setVisible(False)
@@ -2111,7 +2229,7 @@ class MainWindow(QMainWindow):
                            for r in rovers if os.path.isdir(os.path.join(self._folder(), r)))
         usage = self.tracker.usage()
         answer = QMessageBox.question(
-            self, "Full check",
+            self, "Full Check",
             f"A full check compares every sol already on disk with Mars Vista to find missing photos.\n\n"
             f"It uses up to about {existing:,} API requests (you've used {usage.hour:,} of "
             f"{usage.hourly_limit:,} this hour) and can take 30-45 minutes for a large folder. Nothing is "
@@ -2311,12 +2429,13 @@ class MainWindow(QMainWindow):
         self.progress_state = {}
         self._set_mode("idle")
         self.phase.setText("Stopped: error")
-        QMessageBox.warning(self, "Something went wrong", message)
+        QMessageBox.warning(self, "Something Went Wrong", message)
 
     def _show_summary(self, r: Report, cancelled: bool, paused: bool = False) -> None:
         state = "Paused" if paused else "Stopped" if cancelled else "Finished"
         text = (f"<b>{state}.</b> Downloaded {r.downloaded:,} photos; {r.already_present:,} were already on disk; "
-                f"{r.newly_unavailable + r.known_unavailable:,} unavailable at NASA. {r.sols_checked:,} sols checked.")
+                f"{r.newly_unavailable + r.known_unavailable:,} unavailable at NASA. {count(r.sols_checked, 'sol')} "
+                f"checked.")
         if r.left_as_is:
             text += (f" {r.left_as_is:,} Spirit/Opportunity folder(s) from another source were left as is, "
                      f"so nothing was duplicated.")
@@ -2361,7 +2480,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(label(where, "muted", wrap=True))
         grid = QGridLayout()
         grid.setHorizontalSpacing(24)
-        for c, head in enumerate(("", "New sols", "New photos", "Gap fills", "Size")):
+        for c, head in enumerate(("", "New Sols", "New Photos", "Gap Fills", "Size")):
             grid.addWidget(label(head, "rowHead"), 0, c)
         total_photos = total_requests = 0
         unknown_gaps = any_pds = False
@@ -2387,7 +2506,7 @@ class MainWindow(QMainWindow):
             notes.append(f"Expect about {total_requests // 10_000} pause(s) for the rate limit. "
                          "The run continues automatically after each one.")
         if unknown_gaps:
-            notes.append("Gaps in existing sols aren't known yet. Run Full check to include them in the estimate.")
+            notes.append("Gaps in existing sols aren't known yet. Run Full Check to include them in the estimate.")
         if any_pds:
             notes.append("Spirit and Opportunity come from NASA's archive, which doesn't publish photo counts "
                          "per sol, so their photos are counted as the download goes. They use no Mars Vista "
@@ -2398,7 +2517,7 @@ class MainWindow(QMainWindow):
             lay.addWidget(label(n, "muted", wrap=True))
         bb = QDialogButtonBox()
         bb.addButton("Close", QDialogButtonBox.ButtonRole.RejectRole)
-        start = bb.addButton("Start now", QDialogButtonBox.ButtonRole.AcceptRole)
+        start = bb.addButton("Start Now", QDialogButtonBox.ButtonRole.AcceptRole)
         start.setObjectName("primary")
         bb.accepted.connect(dlg.accept)
         bb.rejected.connect(dlg.reject)
@@ -2508,9 +2627,9 @@ class MainWindow(QMainWindow):
         now = time.time() if running else (self.run_ended or time.time())
         s = self.settings
         window = s.speed_window
-        self.counter_heads["Speed"].setText(f"Speed (last {window} s)")
+        self.counter_heads["Speed"].setText(f"Speed (Last {window} s)")
         self.counter_heads["Speed"].setToolTip(f"Download speed averaged over the last {window} seconds. "
-                                               "Change it under View > Speed averaged over.")
+                                               "Change it under View > Units > Speed Averaged Over.")
         if running:
             self.speed_samples.append((now, r.bytes_received, r.downloaded))
             while len(self.speed_samples) > 2 and now - self.speed_samples[1][0] >= window:
@@ -2520,17 +2639,17 @@ class MainWindow(QMainWindow):
             span = now - t0
             byte_rate, photo_rate = (r.bytes_received - b0) / span, (r.downloaded - d0) / span
             self.counters["Speed"].setText(fmt_rate(byte_rate, s.speed_unit))
-            self.counters["Photo rate"].setText(f"{photo_rate:,.1f} photos/s")
+            self.counters["Photo Rate"].setText(f"{photo_rate:,.1f} photos/s")
         elif not running:
             self.counters["Speed"].setText("–")
-            self.counters["Photo rate"].setText("–")
+            self.counters["Photo Rate"].setText("–")
         elapsed = now - self.run_started if self.run_started else 0
         self.counters["Elapsed"].setText(fmt_duration(elapsed) if elapsed else "–")
-        self.counters["Average speed"].setText(fmt_rate(r.bytes_received / elapsed, s.speed_unit)
+        self.counters["Average Speed"].setText(fmt_rate(r.bytes_received / elapsed, s.speed_unit)
                                                if elapsed >= 1 else "–")
-        self.counters["Photos downloaded"].setText(f"{r.downloaded:,}")
-        self.counters["Data downloaded"].setText(fmt_bytes(r.bytes_saved, s.data_unit))
-        self.counters["Already had"].setText(f"{r.already_present:,}")
+        self.counters["Photos Downloaded"].setText(f"{r.downloaded:,}")
+        self.counters["Data Downloaded"].setText(fmt_bytes(r.bytes_saved, s.data_unit))
+        self.counters["Already Had"].setText(f"{r.already_present:,}")
         self.counters["Unavailable at NASA"].setText(f"{r.newly_unavailable + r.known_unavailable:,}")
         errors = self.counters["Errors"]
         errors.setText(f"{len(r.problems):,}")
@@ -2550,9 +2669,9 @@ class MainWindow(QMainWindow):
                 left = remaining / ((i1 - i0) / span)      # sols per second, recently
         if left is not None:
             rest = " (this rover)" if ps.get("rover_count", 1) > 1 else ""
-            self.counters["Time left"].setText(f"~{fmt_duration(left)}{rest}")
+            self.counters["Time Left"].setText(f"~{fmt_duration(left)}{rest}")
         else:
-            self.counters["Time left"].setText("–")
+            self.counters["Time Left"].setText("–")
 
     # ---- library status ----------------------------------------------------------------------------------
 
@@ -2574,23 +2693,24 @@ class MainWindow(QMainWindow):
             elif st.gap_sols == 0:
                 gaps = "None found"
             else:
-                gaps = f"{st.gap_sols:,} sols · up to {st.gap_photos:,}"
+                gaps = f"{count(st.gap_sols, 'sol')} · up to {count(st.gap_photos or 0, 'photo')}"
             new = "N/A" if st.new_sols is None else (
-                f"{st.new_sols:,} sols" if st.new_photos is None else f"{st.new_sols:,} sols · ~{st.new_photos:,} photos")
+                count(st.new_sols, "sol") if st.new_photos is None else
+                f"{count(st.new_sols, 'sol')} · ~{count(st.new_photos, 'photo')}")
             values = {"Sols": sols, "Photos": fmt(st.photos), "Size": fmt_size(st.bytes),
-                      "Latest sol": fmt(latest), "To download": new, "Gaps in your sols": gaps}
+                      "Latest Sol": fmt(latest), "To Download": new, "Gaps in Existing Sols": gaps}
             for row, text in values.items():
                 self.lib_cells[(row, rover)].setText(text)
             if st.new_sols is not None:
                 has_new = True
-            disk = "not scanned" if st.sols_on_disk is None else f"{st.sols_on_disk:,} sol{'' if st.sols_on_disk == 1 else 's'} on disk"
+            disk = "not scanned" if st.sols_on_disk is None else f"{count(st.sols_on_disk, 'sol')} on disk"
             self.rover_status[rover].setText(disk + (f" · latest {latest:,}" if latest is not None else ""))
-        self.lib_note.setVisible(has_new)      # only once "To download" shows numbers
+        self.lib_note.setVisible(has_new)      # only once "To Download" shows numbers
         if not scanned:
             self.outdated_note.setVisible(False)
             self.scanned_label.setText("Not scanned yet")
-            self.lib_hint.setText("Click Quick scan to check this folder." if folder else
-                                  "Choose a photo folder, then click Quick scan.")
+            self.lib_hint.setText("Click Quick Scan to check this folder." if folder else
+                                  "Choose a photo folder, then click Quick Scan.")
             self.lib_hint.setVisible(True)
         else:
             outdated = status.outdated
@@ -2602,7 +2722,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         if self.mode != "idle":
-            answer = QMessageBox.question(self, "Stop and quit?",
+            answer = QMessageBox.question(self, "Stop and Quit?",
                                           "A task is running. Stop it and quit? Finished photos are kept.")
             if answer != QMessageBox.StandardButton.Yes:
                 event.ignore()

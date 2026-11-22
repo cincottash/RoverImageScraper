@@ -9,6 +9,8 @@ from dataclasses import asdict, dataclass, field, fields
 
 from api import SUPPORTED_ROVERS
 
+OPACITY_MIN = 30                         # View > Window Opacity goes from 30 % to 100 %
+
 
 @dataclass
 class Settings:
@@ -33,7 +35,9 @@ class Settings:
     theme: str = "dark"                  # "system" (match the OS) or a theme key from gui.THEMES
     show_log: bool = True
     collapsed_cards: list[str] = field(default_factory=list)   # titles of cards folded to their title bar
-    verbose_log: bool = False            # View > Detailed activity log
+    verbose_log: bool = False            # View > Detailed Activity Log
+    window_opacity: int = 100            # percent (View > Window Opacity)
+    opacity_only_while_busy: bool = False   # apply it only while downloading or scanning; solid otherwise
 
     @classmethod
     def load(cls, path: str) -> "Settings":
@@ -43,7 +47,12 @@ class Settings:
         except (OSError, ValueError):
             return cls()
         names = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in raw.items() if k in names})
+        s = cls(**{k: v for k, v in raw.items() if k in names})
+        try:
+            s.window_opacity = min(100, max(OPACITY_MIN, int(s.window_opacity)))
+        except (TypeError, ValueError):
+            s.window_opacity = 100
+        return s
 
     def save(self, path: str) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)
