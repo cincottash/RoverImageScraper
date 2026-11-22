@@ -1436,7 +1436,6 @@ class MainWindow(QMainWindow):
         if mode != "idle":
             self.cancel = threading.Event()
         self._validate()
-        self._apply_opacity()
 
     # ---- background tasks --------------------------------------------------------------------------------
 
@@ -1710,7 +1709,7 @@ class MainWindow(QMainWindow):
         return menu
 
     def _build_opacity_menu(self, menu: QMenu) -> None:
-        """View > Window Opacity: one slider (the window changes as it moves) and one option."""
+        """View > Window Opacity: one slider. The window changes as it moves."""
         row = QWidget()
         row.setObjectName("menuRow")
         h = QHBoxLayout(row)
@@ -1731,47 +1730,18 @@ class MainWindow(QMainWindow):
         slider_act = QWidgetAction(menu)
         slider_act.setDefaultWidget(row)
         menu.addAction(slider_act)
-        self.act_opacity_busy = menu.addAction("Only While Downloading or Scanning")
-        self.act_opacity_busy.setCheckable(True)
-        self.act_opacity_busy.setChecked(self.settings.opacity_only_while_busy)
-        self.act_opacity_busy.toggled.connect(self._set_opacity_busy)
-        # After the slider moves, its level shows for a moment even when it only applies while busy.
-        self.previewing_opacity = False
-        self.opacity_preview_timer = QTimer(self, singleShot=True, interval=1200)
-        self.opacity_preview_timer.timeout.connect(self._end_opacity_preview)
-        self.opacity_slider.sliderReleased.connect(self.opacity_preview_timer.start)
         self.opacity_slider.valueChanged.connect(self._opacity_moved)
         self._apply_opacity()
 
     def _opacity_moved(self, value: int) -> None:
         self.settings.window_opacity = value
         self.opacity_value.setText(f"{value} %")
-        s = self.opacity_slider
-        if s.isSliderDown() or s.hasFocus() or s.underMouse():       # moved by hand, not by Reset View Options
-            self.previewing_opacity = True
-            self.opacity_preview_timer.start()
-        self._apply_opacity()
-        self._save_settings()
-
-    def _end_opacity_preview(self) -> None:
-        if self.opacity_slider.isSliderDown():          # still held: keep showing it until released
-            return
-        self.previewing_opacity = False
-        self._apply_opacity()
-
-    def _set_opacity_busy(self, on: bool) -> None:
-        self.settings.opacity_only_while_busy = on
         self._apply_opacity()
         self._save_settings()
 
     def _apply_opacity(self) -> None:
-        """The window's opacity from View > Window Opacity. With "Only While Downloading or Scanning" on, the
-        window is solid unless a download or scan is running (or the slider is being moved, to show the level)."""
-        if not hasattr(self, "opacity_slider"):
-            return
-        busy = self.mode in ("download", "scan", "full")
-        solid = self.settings.opacity_only_while_busy and not busy and not self.previewing_opacity
-        level = 1.0 if solid else self.settings.window_opacity / 100
+        """The window's opacity from View > Window Opacity."""
+        level = self.settings.window_opacity / 100
         if abs(self.windowOpacity() - level) > 0.005:
             self.setWindowOpacity(level)
 
@@ -1784,7 +1754,7 @@ class MainWindow(QMainWindow):
 
     # View menu choices, and the download options in the left column (File > Settings > Reset Settings to Defaults).
     VIEW_FIELDS = ("data_unit", "speed_unit", "speed_window", "theme", "show_log", "collapsed_cards",
-                   "window_opacity", "opacity_only_while_busy")
+                   "window_opacity")
     OPTION_FIELDS = ("rovers", "excluded_cameras", "check_existing", "sol_from", "sol_to", "workers", "limit_on",
                      "limit_files", "limit_period")
 
@@ -1802,9 +1772,6 @@ class MainWindow(QMainWindow):
         self._set_log_visible(self.settings.show_log)
         self._apply_folded_cards()
         self.opacity_slider.setValue(self.settings.window_opacity)     # also updates the value beside it
-        self.act_opacity_busy.blockSignals(True)
-        self.act_opacity_busy.setChecked(self.settings.opacity_only_while_busy)
-        self.act_opacity_busy.blockSignals(False)
         self._apply_opacity()
         self._apply_theme()
         self._update_counters()
