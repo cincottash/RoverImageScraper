@@ -37,7 +37,6 @@ class Settings:
     collapsed_cards: list[str] = field(default_factory=list)   # titles of cards folded to their title bar
     verbose_log: bool = False            # View > Detailed Activity Log
     window_opacity: int = 100            # percent (View > Window Opacity)
-    opacity_only_while_busy: bool = False   # apply it only while downloading or scanning; solid otherwise
 
     @classmethod
     def load(cls, path: str) -> "Settings":

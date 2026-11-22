@@ -19,7 +19,7 @@ import threading
 import time
 import traceback
 
-from PySide6.QtCore import QEvent, QProcess, Qt, QTimer, QUrl
+from PySide6.QtCore import QEvent, QObject, QProcess, Qt, QTimer, QUrl
 from PySide6.QtGui import (QActionGroup, QColor, QDesktopServices, QFont, QIcon, QIntValidator, QKeySequence,
                            QPalette)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QGridLayout,
@@ -778,6 +778,40 @@ class SetupDialog(QDialog):
 
 # ---- main window -----------------------------------------------------------------------------------------
 
+def is_popup(w) -> bool:
+    """A menu or a dropdown list's popup: windows of their own, so the main window's opacity doesn't reach them."""
+    return isinstance(w, QMenu) or w.inherits("QComboBoxPrivateContainer")
+
+
+class PopupOpacity(QObject):
+    """Gives every menu and dropdown list the window's opacity as it opens."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.level = 1.0
+        # The system's own choice of menu animations, to put back when the window is solid again
+        self.effects_default = {e: QApplication.isEffectEnabled(e) for e in
+                                (Qt.UIEffect.UI_AnimateMenu, Qt.UIEffect.UI_FadeMenu, Qt.UIEffect.UI_AnimateCombo)}
+
+    @classmethod
+    def for_app(cls, app: QApplication) -> "PopupOpacity":
+        """One filter per app, shared by every main window (a second filter would undo the first's level)."""
+        existing = app.findChild(cls, "popupOpacity")
+        if existing is not None:
+            return existing
+        f = cls(app)
+        f.setObjectName("popupOpacity")
+        app.installEventFilter(f)
+        return f
+
+    def eventFilter(self, obj, event) -> bool:
+        if (event.type() in (QEvent.Type.Polish, QEvent.Type.Show) and isinstance(obj, QWidget) and obj.isWindow()
+                and is_popup(obj)):
+            if abs(obj.windowOpacity() - self.level) > 0.005:
+                obj.setWindowOpacity(self.level)
+        return False
+
+
 class MainWindow(QMainWindow):
     POLL_MS = 200
 
@@ -822,6 +856,7 @@ class MainWindow(QMainWindow):
         self.resize(min(1200, avail.width() - 40) if avail else 1200,
                     min(1000, avail.height() - 60) if avail else 900)
         self._build()
+        self.popup_opacity = PopupOpacity.for_app(app)
         self._build_menus()
         self._load_settings_into_widgets()
         self._refresh_library()
@@ -1436,7 +1471,6 @@ class MainWindow(QMainWindow):
         if mode != "idle":
             self.cancel = threading.Event()
         self._validate()
-        self._apply_opacity()
 
     # ---- background tasks --------------------------------------------------------------------------------
 
@@ -1710,7 +1744,7 @@ class MainWindow(QMainWindow):
         return menu
 
     def _build_opacity_menu(self, menu: QMenu) -> None:
-        """View > Window Opacity: one slider (the window changes as it moves) and one option."""
+        """View > Window Opacity: one slider. The window changes as it moves."""
         row = QWidget()
         row.setObjectName("menuRow")
         h = QHBoxLayout(row)
@@ -1731,49 +1765,30 @@ class MainWindow(QMainWindow):
         slider_act = QWidgetAction(menu)
         slider_act.setDefaultWidget(row)
         menu.addAction(slider_act)
-        self.act_opacity_busy = menu.addAction("Only While Downloading or Scanning")
-        self.act_opacity_busy.setCheckable(True)
-        self.act_opacity_busy.setChecked(self.settings.opacity_only_while_busy)
-        self.act_opacity_busy.toggled.connect(self._set_opacity_busy)
-        # After the slider moves, its level shows for a moment even when it only applies while busy.
-        self.previewing_opacity = False
-        self.opacity_preview_timer = QTimer(self, singleShot=True, interval=1200)
-        self.opacity_preview_timer.timeout.connect(self._end_opacity_preview)
-        self.opacity_slider.sliderReleased.connect(self.opacity_preview_timer.start)
         self.opacity_slider.valueChanged.connect(self._opacity_moved)
         self._apply_opacity()
 
     def _opacity_moved(self, value: int) -> None:
         self.settings.window_opacity = value
         self.opacity_value.setText(f"{value} %")
-        s = self.opacity_slider
-        if s.isSliderDown() or s.hasFocus() or s.underMouse():       # moved by hand, not by Reset View Options
-            self.previewing_opacity = True
-            self.opacity_preview_timer.start()
-        self._apply_opacity()
-        self._save_settings()
-
-    def _end_opacity_preview(self) -> None:
-        if self.opacity_slider.isSliderDown():          # still held: keep showing it until released
-            return
-        self.previewing_opacity = False
-        self._apply_opacity()
-
-    def _set_opacity_busy(self, on: bool) -> None:
-        self.settings.opacity_only_while_busy = on
         self._apply_opacity()
         self._save_settings()
 
     def _apply_opacity(self) -> None:
-        """The window's opacity from View > Window Opacity. With "Only While Downloading or Scanning" on, the
-        window is solid unless a download or scan is running (or the slider is being moved, to show the level)."""
-        if not hasattr(self, "opacity_slider"):
-            return
-        busy = self.mode in ("download", "scan", "full")
-        solid = self.settings.opacity_only_while_busy and not busy and not self.previewing_opacity
-        level = 1.0 if solid else self.settings.window_opacity / 100
-        if abs(self.windowOpacity() - level) > 0.005:
-            self.setWindowOpacity(level)
+        """The window's opacity from View > Window Opacity, also on the menus and dropdown lists that are open
+        (each is a separate window; ones opened later get it from PopupOpacity)."""
+        level = self.settings.window_opacity / 100
+        self.popup_opacity.level = level
+        # Every menu, not only open ones: a menu that has its opacity before it first opens shows it from the start.
+        for w in [self] + [p for p in QApplication.topLevelWidgets() if is_popup(p)] + self.findChildren(QMenu):
+            if abs(w.windowOpacity() - level) > 0.005:
+                w.setWindowOpacity(level)
+        # Qt's opening animation for menus and dropdown lists (used when a menu is opened by a click) draws them
+        # solid, ignoring the opacity, so it's off while the window is see-through.
+        solid = level >= 0.995
+        for effect in (Qt.UIEffect.UI_AnimateMenu, Qt.UIEffect.UI_FadeMenu, Qt.UIEffect.UI_AnimateCombo):
+            if QApplication.isEffectEnabled(effect) != (solid and self.popup_opacity.effects_default[effect]):
+                QApplication.setEffectEnabled(effect, solid and self.popup_opacity.effects_default[effect])
 
     def _theme_menu_hovered(self, act, theme_acts: list) -> None:
         """The pointer is on something in View > Theme that isn't a theme (a group's name): show the saved theme
@@ -1784,7 +1799,7 @@ class MainWindow(QMainWindow):
 
     # View menu choices, and the download options in the left column (File > Settings > Reset Settings to Defaults).
     VIEW_FIELDS = ("data_unit", "speed_unit", "speed_window", "theme", "show_log", "collapsed_cards",
-                   "window_opacity", "opacity_only_while_busy")
+                   "window_opacity")
     OPTION_FIELDS = ("rovers", "excluded_cameras", "check_existing", "sol_from", "sol_to", "workers", "limit_on",
                      "limit_files", "limit_period")
 
@@ -1802,9 +1817,6 @@ class MainWindow(QMainWindow):
         self._set_log_visible(self.settings.show_log)
         self._apply_folded_cards()
         self.opacity_slider.setValue(self.settings.window_opacity)     # also updates the value beside it
-        self.act_opacity_busy.blockSignals(True)
-        self.act_opacity_busy.setChecked(self.settings.opacity_only_while_busy)
-        self.act_opacity_busy.blockSignals(False)
         self._apply_opacity()
         self._apply_theme()
         self._update_counters()
@@ -2490,7 +2502,7 @@ class MainWindow(QMainWindow):
                 unknown_gaps = True
             total_requests += row["requests"]
             gap_text = "not included" if not self._preview_check_existing else (
-                "unknown" if gaps is None else f"up to {gaps:,}")
+                "unknown" if gaps is None else "none" if gaps == 0 else f"up to {count(gaps, 'photo')}")
             if row["new_photos"] is None:       # NASA PDS rover: counted only while downloading
                 any_pds = True
                 photo_text, size_text = "counted as it goes", "–"

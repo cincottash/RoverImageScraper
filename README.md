@@ -127,10 +127,9 @@ theme you had.
 
 ### Window opacity
 
-![View > Window Opacity: an Opacity slider at 100 %, and Only While Downloading or Scanning](.github/readme/menu_opacity.png)
+![View > Window Opacity: an Opacity slider at 100 %](.github/readme/menu_opacity.png)
 
-*View > Window Opacity* makes the window see-through. The window changes as the slider moves (30–100 %). With
-*Only While Downloading or Scanning* ticked, the window stays solid the rest of the time.
+*View > Window Opacity* makes the window see-through. The window changes as the slider moves (30–100 %).
 
 <details>
 <summary><b>Every menu item</b></summary>
