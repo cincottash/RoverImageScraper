@@ -74,10 +74,11 @@ Unticking a rover unticks its cameras; ticking it again brings back the cameras 
 
 ### Library status
 
-![The Library Status card: sols, photos and size on disk for Curiosity, Perseverance and Spirit, and the latest sol, what's left to download and gaps found online](.github/readme/library.png)
+![The Library Status card: sols, photos and size on disk for all four rovers, and the latest sol, what's left to download and gaps found online](.github/readme/library.png)
 
-What's in your folder and what's online, for each rover. *Quick Scan* counts both. *Full Check* also finds gaps
-inside the sols you have; it uses about one Mars Vista request per sol, so it asks first.
+What's in your folder and what's online, for every rover, ticked or not. *Quick Scan* counts both for the ticked
+rovers; the others keep the numbers from their last scan. *Full Check* also finds gaps inside the sols you have; it
+uses about one Mars Vista request per sol, so it asks first.
 
 ### Progress and API usage
 
