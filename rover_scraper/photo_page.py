@@ -121,9 +121,9 @@ class ImageLoader(QObject):
 
 
 class CountWorker(QObject):
-    """Counts the photos of each sol on a background thread; counted(rover, {sol: n}) arrives in batches."""
+    """Counts the photos of each sol on a background thread; counted(folder, rover, {sol: n}) arrives in batches."""
 
-    counted = Signal(str, object)            # object: a Python dict can't pass through a signal declared as dict
+    counted = Signal(str, str, object)       # object: a Python dict can't pass through a signal declared as dict
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -140,10 +140,10 @@ class CountWorker(QObject):
                     return
                 batch[sol] = sol_photo_count(folder, rover, sol)
                 if time.monotonic() - last > 0.25:
-                    self.counted.emit(rover, batch)
+                    self.counted.emit(folder, rover, batch)
                     batch, last = {}, time.monotonic()
             if batch and gen == self._generation:
-                self.counted.emit(rover, batch)
+                self.counted.emit(folder, rover, batch)
 
         threading.Thread(target=work, daemon=True, name="photo-counter").start()
 
@@ -502,7 +502,10 @@ class PhotosPage(QWidget):
         self.tree.headerItem().setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionResizeMode(0, self.tree.header().ResizeMode.Stretch)
-        self.tree.header().setSectionResizeMode(1, self.tree.header().ResizeMode.ResizeToContents)
+        # A fixed width: fitting the column to its contents re-measures every sol each time a count arrives,
+        # which froze the window for seconds while thousands of sols were counted.
+        self.tree.header().setSectionResizeMode(1, self.tree.header().ResizeMode.Fixed)
+        self._size_count_column()
         self.tree.setUniformRowHeights(True)
         self.tree.itemExpanded.connect(self._fill_cameras)
         self.tree.currentItemChanged.connect(lambda cur, _prev: self._tree_chosen(cur))
@@ -704,6 +707,19 @@ class PhotosPage(QWidget):
         elif not sols and rover:
             self._set_empty("No sols in this rover's folder yet.")
 
+    def _size_count_column(self) -> None:
+        """Wide enough for the header and any count (up to 999,999), in the tree's current font."""
+        if not hasattr(self, "tree"):                # a change event before the page is built
+            return
+        self.tree.ensurePolished()                   # the style sheet's font
+        fm = self.tree.fontMetrics()
+        self.tree.setColumnWidth(1, max(fm.horizontalAdvance("999,999"), fm.horizontalAdvance("Photos")) + 24)
+
+    def changeEvent(self, event) -> None:
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            self._size_count_column()
+        super().changeEvent(event)
+
     def _make_sol_item(self, folder: str, rover: str, sol: int) -> QTreeWidgetItem:
         item = QTreeWidgetItem([f"Sol {sol}", ""])
         item.setData(0, Qt.ItemDataRole.UserRole, ("sol", sol))
@@ -745,8 +761,9 @@ class PhotosPage(QWidget):
             self.counter.start(folder, rover, todo)
         self._update_browse_note()
 
-    def _counted(self, rover: str, batch: dict) -> None:
-        folder = self.loaded_folder or ""
+    def _counted(self, folder: str, rover: str, batch: dict) -> None:
+        if folder != (self.loaded_folder or ""):     # counted before the photo folder changed
+            return
         for sol, n in batch.items():
             self.counts[(folder, rover, sol)] = n
             if rover == self._rover() and sol in self.sol_items:
@@ -1091,6 +1108,7 @@ class PhotosPage(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        self._size_count_column()
         QTimer.singleShot(0, self.refresh)
 
     def shutdown(self) -> None:
