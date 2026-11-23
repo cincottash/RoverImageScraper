@@ -314,7 +314,9 @@ The app never overwrites, renames or deletes files in your photo folder. It only
 
 The app keeps a few files of its own (settings, scan results, Mars Vista request counts, the list of photos
 unavailable at NASA, the photo details looked up for the Photos page in `photo_details.db`, and your favorites and
-flipbooks in `favorites.json`) in its *app data folder*, never in your photo folder. The photo details grow with your library: roughly 200–250 MB once all of
+flipbooks in `favorites.json`) in its *app data folder*, never in your photo folder. If the window ever stops
+responding for half a second or more, `slow_moments.log` there notes when, for how long and what the app was doing
+(at most 256 KB), which helps find the cause; *Help > Open App Data Folder* opens it. The photo details grow with your library: roughly 200–250 MB once all of
 Curiosity's and Perseverance's photos have theirs. You choose it on first run; it
 can be on any drive. The suggested place is `%LOCALAPPDATA%\RoverImageScraper\` on Windows and
 `~/.local/share/RoverImageScraper/` on macOS and Linux. Which folder you chose is remembered for your user account
@@ -467,6 +469,7 @@ All program code is in `rover_scraper/`:
 - `photo_page.py`: the Photos page. `photo_library.py`: finds the photos in the folder.
   `photo_details.py`: looks up when and where photos were taken, and keeps the details.
   `favorites.py`: favorites and saved flipbooks. `flipbook.py`: the flipbook player and its controls.
+- `slow_moments.py`: notes the moments the window stops responding, and what it was doing.
 - `state.py`: the app data folder, and the photos NASA won't serve. `settings.py`: the app's saved settings.
 - `check.svg` and `check_dark.svg`: the tick drawn in checkboxes (white, or dark on light accent colors).
 
