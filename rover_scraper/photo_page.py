@@ -27,6 +27,7 @@ from photo_library import (PhotoFile, camera_name, cameras_in, earth_date, photo
                            sol_photo_count, sols_in)
 
 THUMB_MIN, THUMB_MAX = 64, 256
+LIST_CACHE_MAX = 60                # photo lists of sols and cameras kept in memory
 NEWEST_MAX = 2000                  # photos kept in "Newest Downloads"
 
 
@@ -94,6 +95,7 @@ class ImageLoader(QObject):
         super().__init__(parent)
         self._lock = threading.Condition()
         self._waiting: collections.OrderedDict = collections.OrderedDict()   # key -> (path, size)
+        self._low: collections.OrderedDict = collections.OrderedDict()       # read ahead, when nothing else waits
         self._max_waiting = max_waiting
         self._hold = hold
         self._active = 0
@@ -106,34 +108,54 @@ class ImageLoader(QObject):
 
     def busy(self) -> bool:
         with self._lock:
-            return not self._closed and (bool(self._waiting) or self._active > 0)
+            return not self._closed and (bool(self._waiting) or bool(self._low) or self._active > 0)
 
-    def request(self, key, path: str, size: int | None) -> None:
+    def request(self, key, path: str, size: int | None, low: bool = False) -> None:
+        """low: read ahead (photos likely to be wanted next), only while nothing else is waiting, in the order
+        asked. A normal request for the same key takes it over."""
         with self._lock:
-            self._waiting.pop(key, None)
-            self._waiting[key] = (path, size)
-            while len(self._waiting) > self._max_waiting:
-                self._waiting.popitem(last=False)          # the oldest request: long scrolled past
+            if low:
+                if key in self._waiting:
+                    return
+                self._low.pop(key, None)
+                self._low[key] = (path, size)
+                while len(self._low) > self._max_waiting:
+                    self._low.popitem(last=False)
+            else:
+                self._low.pop(key, None)
+                self._waiting.pop(key, None)
+                self._waiting[key] = (path, size)
+                while len(self._waiting) > self._max_waiting:
+                    self._waiting.popitem(last=False)          # the oldest request: long scrolled past
             self._lock.notify()
 
     def clear(self) -> None:
         with self._lock:
             self._waiting.clear()
 
+    def clear_low(self) -> None:
+        with self._lock:
+            self._low.clear()
+
     def close(self) -> None:
         with self._lock:
             self._closed = True
             self._waiting.clear()
+            self._low.clear()
             self._lock.notify_all()
 
     def _run(self) -> None:
         while True:
             with self._lock:
-                while not self._closed and (not self._waiting or (self._hold is not None and self._hold())):
-                    self._lock.wait(0.03 if self._waiting else None)
+                while not self._closed and ((not self._waiting and not self._low)
+                                            or (self._hold is not None and self._hold())):
+                    self._lock.wait(0.03 if self._waiting or self._low else None)
                 if self._closed:
                     return
-                key, (path, size) = self._waiting.popitem(last=True)
+                if self._waiting:
+                    key, (path, size) = self._waiting.popitem(last=True)
+                else:
+                    key, (path, size) = self._low.popitem(last=False)
                 self._active += 1
             try:
                 img = read_image(path, size)
@@ -148,8 +170,8 @@ class ImageLoader(QObject):
 
 class PhotoLister(QObject):
     """Lists the photos of a sol or a camera folder on a background thread, so a slow disk never freezes the
-    window. Only the newest request matters: older ones still waiting are dropped. listed(key, photos) arrives on
-    the GUI thread."""
+    window. Only the newest request matters: older ones still waiting are dropped. Read-ahead requests (low) wait
+    for it. listed(key, photos) arrives on the GUI thread."""
 
     listed = Signal(object, object)
 
@@ -157,17 +179,27 @@ class PhotoLister(QObject):
         super().__init__(parent)
         self._cond = threading.Condition()
         self._job = None
-        self._active = False
+        self._low: list = []
+        self._active = False                     # a normal request is being read
         self._closed = False
         threading.Thread(target=self._run, daemon=True, name="photo-lister").start()
         _SCREEN_READERS.add(self)
 
-    def request(self, key, folder: str, rover: str, sol: int, camera: str | None) -> None:
+    def request(self, key, folder: str, rover: str, sol: int, camera: str | None, low: bool = False) -> None:
         with self._cond:
-            self._job = (key, folder, rover, sol, camera)
+            if low:
+                self._low.append((key, folder, rover, sol, camera))
+                del self._low[:-4]               # only the latest few read-ahead lists
+            else:
+                self._job = (key, folder, rover, sol, camera)
             self._cond.notify()
 
+    def clear_low(self) -> None:
+        with self._cond:
+            self._low.clear()
+
     def busy(self) -> bool:
+        """A normal request is waiting or being read (read-ahead doesn't count)."""
         with self._cond:
             return not self._closed and (self._job is not None or self._active)
 
@@ -175,17 +207,21 @@ class PhotoLister(QObject):
         with self._cond:
             self._closed = True
             self._job = None
+            self._low.clear()
             self._cond.notify_all()
 
     def _run(self) -> None:
         while True:
             with self._cond:
-                while self._job is None and not self._closed:
+                while self._job is None and not self._low and not self._closed:
                     self._cond.wait()
                 if self._closed:
                     return
-                (key, folder, rover, sol, camera), self._job = self._job, None
-                self._active = True
+                if self._job is not None:
+                    (key, folder, rover, sol, camera), self._job = self._job, None
+                    self._active = True
+                else:
+                    key, folder, rover, sol, camera = self._low.pop(0)
             try:
                 photos = photos_in(folder, rover, sol, camera)
             except Exception:  # noqa: BLE001 - a folder that can't be read shows as empty
@@ -310,15 +346,20 @@ class PhotoGridModel(QAbstractListModel):
         if not (isinstance(key, tuple) and key[0] == "thumb") or key[2] != self.size:
             return
         path = key[1]
-        row = self.rows.get(path)
-        if row is None:
-            return
         pix = QPixmap.fromImage(img) if not img.isNull() else self.blank
-        self.cache[path] = pix
+        self.cache[path] = pix                   # also photos read ahead, not shown yet
         while len(self.cache) > self._cache_limit():
             self.cache.popitem(last=False)
-        idx = self.index(row)
-        self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.DecorationRole])
+        row = self.rows.get(path)
+        if row is not None:
+            idx = self.index(row)
+            self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.DecorationRole])
+
+    def read_ahead(self, photos: list[PhotoFile]) -> None:
+        """Thumbnails likely to be wanted next, read while nothing else waits."""
+        for p in photos:
+            if p.path not in self.cache:
+                self.loader.request(("thumb", p.path, self.size), p.path, self.size, low=True)
 
 
 class ThumbDelegate(QStyledItemDelegate):
@@ -546,6 +587,11 @@ class PhotosPage(QWidget):
         self.image_sizes: dict[str, str] = {}                         # path -> "1,200 × 900 pixels"
         self.loading_timer = QTimer(self, singleShot=True, interval=250)
         self.loading_timer.timeout.connect(self._show_loading)
+        self.list_cache: collections.OrderedDict = collections.OrderedDict()   # (folder, rover, key) -> photos
+        self.ahead_timer = QTimer(self, singleShot=True, interval=400)         # neighbours, once settled
+        self.ahead_timer.timeout.connect(self._read_ahead_neighbours)
+        self.goto_timer = QTimer(self, singleShot=True, interval=250)          # Go To Sol, once typing pauses
+        self.goto_timer.timeout.connect(self._read_ahead_goto)
         self.counts: dict[tuple[str, str, int], int] = {}             # (folder, rover, sol) -> photos
         self.sol_items: dict[int, QTreeWidgetItem] = {}
         self.newest: collections.deque[PhotoFile] = collections.deque(maxlen=NEWEST_MAX)
@@ -584,6 +630,7 @@ class PhotosPage(QWidget):
         self.goto.setValidator(QIntValidator(0, 100000))
         self.goto.setPlaceholderText("Number")
         self.goto.returnPressed.connect(self._go_to_sol)
+        self.goto.textEdited.connect(lambda _t: self.goto_timer.start())     # read it ahead while typing
         row.addWidget(self.goto, 1)
         bl.addLayout(row)
         self.tree = QTreeWidget()
@@ -943,17 +990,29 @@ class PhotosPage(QWidget):
             self._show_photos(key, photos, title, show_camera=True, empty="No photos downloaded yet.")
             return
         # Listed on a background thread: on a hard disk, reading a sol's folders the first time takes a moment.
-        # What was shown stays until the list arrives ("Loading photos…" if that takes a while).
-        self.list_key = (folder, rover, key)
+        # What was shown stays until the list arrives ("Loading photos…" if that takes a while). A list read
+        # recently or ahead is shown at once, and read again in the background in case the folder changed.
+        list_key = (folder, rover, key)
         self.loader.clear()                            # thumbnails still waiting for the old view
+        cam = key[2] if key[0] == "camera" else None
+        cached = self.list_cache.get(list_key)
+        if cached is not None:
+            self.list_cache.move_to_end(list_key)
+            self._apply_list(list_key, cached)
+            self.lister.request(("check", list_key), folder, rover, key[1], cam)
+            return
+        self.list_key = list_key
         self.grid_title.setText(f"{self._view_title(rover, key)} · Loading…")
-        self.lister.request(self.list_key, folder, rover, key[1], key[2] if key[0] == "camera" else None)
+        self.lister.request(("view", list_key), folder, rover, key[1], cam)
         self.loading_timer.start()
 
     def _forget_listing(self) -> None:
-        """A photo list still on its way is no longer wanted."""
+        """A photo list still on its way is no longer wanted, nor what was being read ahead."""
         self.list_key = None
         self.loading_timer.stop()
+        self.ahead_timer.stop()
+        self.lister.clear_low()
+        self.loader.clear_low()
 
     @staticmethod
     def _view_title(rover: str, key) -> str:
@@ -966,9 +1025,78 @@ class PhotosPage(QWidget):
             if self.stack.currentWidget() is not self.full_page:
                 self.stack.setCurrentWidget(self.empty)
 
-    def _listed(self, list_key, photos: list[PhotoFile]) -> None:
-        if list_key != self.list_key:                  # an older choice, or another folder or rover
+    def _remember_list(self, list_key, photos: list[PhotoFile]) -> None:
+        self.list_cache[list_key] = photos
+        self.list_cache.move_to_end(list_key)
+        while len(self.list_cache) > LIST_CACHE_MAX:
+            self.list_cache.popitem(last=False)
+
+    def _listed(self, job, photos: list[PhotoFile]) -> None:
+        if not (isinstance(job, tuple) and len(job) == 2):
             return
+        kind, list_key = job
+        if list_key[0] != (self.loaded_folder or "") or list_key[1] != self._rover():
+            return                                     # another folder or rover by now
+        self._remember_list(list_key, photos)
+        if kind == "ahead":
+            self.model.read_ahead(photos[:self._first_screen()])
+        elif kind == "check":                          # shown from memory: did the folder change since?
+            if (self.list_key is None and self.view_key == list_key[2]
+                    and [p.path for p in photos] != [p.path for p in self.model.photos]):
+                if self.current is not None:
+                    self.select_path = self.current.path
+                self._apply_list(list_key, photos)
+        elif list_key == self.list_key:                # not an older choice
+            self._apply_list(list_key, photos)
+
+    def _first_screen(self) -> int:
+        """About how many thumbnails fit in the grid."""
+        cell = self.grid.gridSize()
+        vp = self.grid.viewport().size()
+        if cell.width() <= 0 or cell.height() <= 0:
+            return 30
+        return max(12, (max(1, vp.width() // cell.width())) * (vp.height() // cell.height() + 1))
+
+    def _read_ahead(self, sols: list[int]) -> None:
+        """Read these sols' photo lists and first thumbnails while nothing else needs the disk."""
+        folder, rover = self.loaded_folder or "", self._rover()
+        if not folder or not rover:
+            return
+        self.lister.clear_low()
+        self.loader.clear_low()
+        for sol in sols:
+            list_key = (folder, rover, ("sol", sol))
+            cached = self.list_cache.get(list_key)
+            if cached is not None:
+                self.model.read_ahead(cached[:self._first_screen()])
+            else:
+                self.lister.request(("ahead", list_key), folder, rover, sol, None, low=True)
+
+    def _read_ahead_goto(self) -> None:
+        """Go To Sol: the sol being typed, so it's ready when Enter is pressed."""
+        text = self.goto.text().strip()
+        if text.isdigit() and self.sol_items:
+            want = int(text)
+            self._read_ahead([min(self.sol_items, key=lambda s: (abs(s - want), s))])
+
+    def _read_ahead_neighbours(self) -> None:
+        """The sols before and after the one shown, for stepping through them."""
+        if not self.view_key or self.view_key[0] not in ("sol", "camera") or self.list_key is not None:
+            return
+        sols = sorted(self.sol_items)
+        try:
+            i = sols.index(self.view_key[1])
+        except ValueError:
+            return
+        self._read_ahead([sols[j] for j in (i + 1, i - 1) if 0 <= j < len(sols)])
+
+    def _forget_lists(self, folder: str, rover: str, sol: int) -> None:
+        """A download changed this sol's folders: its lists in memory are out of date."""
+        for k in [k for k in self.list_cache if k[0] == folder and k[1] == rover and k[2][1] == sol]:
+            del self.list_cache[k]
+
+    def _apply_list(self, list_key, photos: list[PhotoFile]) -> None:
+        """Show a sol's or camera's photos (its list just arrived, or was in memory)."""
         self.list_key = None
         self.loading_timer.stop()
         folder, rover, key = list_key
@@ -989,6 +1117,7 @@ class PhotosPage(QWidget):
             self._show_photos(key, photos, title, show_camera=True, empty="No photos in this sol's folder.")
         else:
             self._show_photos(key, photos, title, show_camera=False, empty="No photos in this camera's folder.")
+        self.ahead_timer.start()                       # then the sols before and after, while the disk is free
 
     def _show_photos(self, key, photos: list[PhotoFile], title: str, show_camera: bool, empty: str) -> None:
         self.view_key = key
@@ -1216,6 +1345,7 @@ class PhotosPage(QWidget):
         # The sol is counted again from the folder shortly (adding 1 here could count a photo twice, if the
         # background count read the folder after the file was saved).
         self.dirty_sols.add((folder, p.rover, p.sol))
+        self._forget_lists(folder, p.rover, p.sol)
         if not self.recount_timer.isActive():
             self.recount_timer.start()
         if folder == self.loaded_folder:
