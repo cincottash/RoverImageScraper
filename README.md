@@ -118,7 +118,8 @@ are folded.
 The **Photos** tab (or *Ctrl+2*) browses the photo folder without a file manager.
 
 - **Browse:** choose a rover, then a sol (with its number of photos), then a camera, or type a sol into *Go To
-  Sol*. While a download runs, *Newest Downloads* lists the photos as they arrive.
+  Sol* (it opens that sol, or the nearest one). While a download runs, *Newest Downloads* lists the photos as they
+  arrive. *Favorites* and *Flipbooks* are at the top (below).
 - **Thumbnails:** *Thumbnail Size* makes them bigger or smaller. Arrow keys move between photos.
 - **Details:** the chosen photo's preview, rover, sol, camera, size and file, and the details looked up online
   (below). *Show in Folder* opens it in your file manager.
@@ -126,7 +127,7 @@ The **Photos** tab (or *Ctrl+2*) browses the photo folder without a file manager
   dragging moves the photo, and a double-click switches between *Fit* and *Actual Size*. *Previous* and *Next*
   (or the arrow keys) step through the camera's photos; *Esc* goes back.
 
-![A photo at full size, with Previous, Next, Fit and Actual Size above it](.github/readme/photo_full.png)
+![A photo at full size, with Previous, Next, Fit, Actual Size and Favorite above it, and the flipbook bar below it: Play, From, To, Speed, Loop, Same Size Only and Save Flipbook](.github/readme/photo_full.png)
 
 **When and where each photo was taken** is looked up online the first time you open a sol, for all its photos at
 once, and kept in the app data folder, so it shows instantly after that (also offline). It shows the time taken
@@ -148,6 +149,37 @@ at any point; the next run carries on from there.
 - The details belong to the photo folder: after moving the folder, sols are looked up again.
 
 </details>
+
+### Favorites
+
+![Favorites: five starred photos with their notes as captions, and below Favorites in the list two favorite folders and a saved flipbook](.github/readme/favorites.png)
+
+- **A photo:** *Add to Favorites* in the details, *Favorite* at full size, or the **F** key. Favorites get a star
+  on their thumbnail and a *Note* box in the details; the note becomes the thumbnail's caption under *Favorites*.
+- **A sol or camera folder:** right-click it in the list. Favorite folders are listed under *Favorites*; choosing
+  one goes there. Right-click one to edit its note or remove it.
+- **Favorites** at the top of the list shows the favorite photos of every rover.
+- *File > Import Favorites…* adds favorites from a text list with one `Rover/sol/CAMERA/number` per line (the
+  number, or the camera and number, can be left out for a whole folder), then an optional note. It shows what it
+  will add, and which lines it didn't understand, before adding anything.
+
+Favorites are kept in the app data folder by rover, sol, camera and number, so they still apply after the photo
+folder moves.
+
+### Flipbooks
+
+Photos taken a moment apart play like a film: a landing, the arm moving, the sky changing. At full size:
+
+1. Choose **From** and **To** (they start as the camera folder's first and last photo), or use *Set From Here* and
+   *Set To Here* on the photo shown.
+2. Click **Play** (or press **P**). **Speed** is 1–30 photos a second; **Loop** starts again after the last photo.
+   **Same Size Only** skips photos of another size than the first, as folders often mix full frames with
+   thumbnails. Photos play in the order they were taken when that's known, otherwise in their numbers' order.
+3. **Save Flipbook…** keeps it, with its name, photos, speed and options, under *Flipbooks* in the list. Choosing
+   it plays it again; change the speed or anything else, then *Save Changes* (or *Save as New…*). Right-click a
+   saved flipbook to rename or delete it.
+
+Frames are read a little ahead of the one shown; on a slow disk the flipbook pauses rather than skipping photos.
 
 ## Menus
 
@@ -178,8 +210,8 @@ folder picker instead of the system's, because the system's can't be see-through
 <details>
 <summary><b>Every menu item</b></summary>
 
-- **File:** Choose Photo Folder… (Ctrl+O), Open Photo Folder, **Settings** (Change App Data Folder…, Reset
-  Settings to Defaults…), Quit (Ctrl+Q).
+- **File:** Choose Photo Folder… (Ctrl+O), Open Photo Folder, Import Favorites… (see [Favorites](#favorites)),
+  **Settings** (Change App Data Folder…, Reset Settings to Defaults…), Quit (Ctrl+Q).
 - **Download:** Start, Pause, Stop, Quick Scan, Full Check… and Preview (the same as the buttons), *Get Details
   for Downloaded Photos…* (see [Photos](#photos)), and *Retry Photos Unavailable at NASA (Next Run)*, which tries
   all photos NASA wouldn't send again on the next run.
@@ -281,9 +313,9 @@ The app never overwrites, renames or deletes files in your photo folder. It only
 <summary><b>The app data folder</b></summary>
 
 The app keeps a few files of its own (settings, scan results, Mars Vista request counts, the list of photos
-unavailable at NASA, and the photo details looked up for the Photos page in `photo_details.db`) in its *app data
-folder*, never in your photo folder. The photo details grow with your library: roughly 200–250 MB for every
-Curiosity and Perseverance photo. You choose it on first run; it
+unavailable at NASA, the photo details looked up for the Photos page in `photo_details.db`, and your favorites and
+flipbooks in `favorites.json`) in its *app data folder*, never in your photo folder. The photo details grow with your library: roughly 200–250 MB once all of
+Curiosity's and Perseverance's photos have theirs. You choose it on first run; it
 can be on any drive. The suggested place is `%LOCALAPPDATA%\RoverImageScraper\` on Windows and
 `~/.local/share/RoverImageScraper/` on macOS and Linux. Which folder you chose is remembered for your user account
 (in the Windows registry under `HKCU\Software\RoverImageScraper`, or in `~/.config/RoverImageScraper/data_folder`
@@ -434,6 +466,7 @@ All program code is in `rover_scraper/`:
 - `ratelimit.py`: counts Mars Vista requests, and the optional download limit.
 - `photo_page.py`: the Photos page. `photo_library.py`: finds the photos in the folder.
   `photo_details.py`: looks up when and where photos were taken, and keeps the details.
+  `favorites.py`: favorites and saved flipbooks. `flipbook.py`: the flipbook player and its controls.
 - `state.py`: the app data folder, and the photos NASA won't serve. `settings.py`: the app's saved settings.
 - `check.svg` and `check_dark.svg`: the tick drawn in checkboxes (white, or dark on light accent colors).
 

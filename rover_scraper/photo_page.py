@@ -7,25 +7,32 @@ nothing is written to disk.
 from __future__ import annotations
 
 import collections
+import functools
 import os
 import subprocess
 import sys
 import threading
 import time
+import weakref
 from typing import Callable
 
 from PySide6.QtCore import (QAbstractListModel, QEvent, QModelIndex, QObject, QPointF, QRect, QRectF, QSize, Qt,
                             QTimer, QUrl, Signal)
-from PySide6.QtGui import (QColor, QDesktopServices, QImage, QImageReader, QIntValidator, QPainter, QPalette,
-                           QPixmap)
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
-                               QListView, QPushButton, QSizePolicy, QSlider, QStackedWidget, QStyle,
-                               QStyledItemDelegate, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtGui import (QColor, QDesktopServices, QImage, QImageReader, QIntValidator, QKeySequence, QPainter,
+                           QPalette, QPixmap, QShortcut)
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel,
+                               QLineEdit, QListView, QMenu, QMessageBox, QPushButton, QSizePolicy, QSlider,
+                               QStackedWidget, QStyle, QStyledItemDelegate, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+                               QWidget)
 
-from photo_library import (PhotoFile, camera_name, cameras_in, earth_date, photo_from_path, photos_in, rovers_in,
-                           sol_photo_count, sols_in)
+from favorites import FavoritesStore, Flipbook, fav_key
+from flipbook import FlipbookBar, FlipbookPlayer
+from photo_library import (PhotoFile, camera_name, cameras_in, earth_date, find_photos, photo_from_path, photos_in,
+                           rovers_in, sol_photo_count, sols_in)
 
 THUMB_MIN, THUMB_MAX = 64, 256
+LIST_CACHE_MAX = 60                # photo lists of sols and cameras kept in memory
+STAR_COLOR = "#f5c542"             # the favorite star on thumbnails (on a dark disc, so it shows in every theme)
 NEWEST_MAX = 2000                  # photos kept in "Newest Downloads"
 
 
@@ -55,16 +62,30 @@ def show_in_folder(path: str) -> None:
 
 # ---- loading images in the background --------------------------------------------------------------------
 
+FULL_SIZE = "full-size"           # image text: the photo's own size, "<width>x<height>", before any shrinking
+
+
 def read_image(path: str, size: int | None) -> QImage:
-    """The image at path, shrunk while reading so its longer side is at most size (None: full size)."""
+    """The image at path, shrunk while reading so its longer side is at most size (None: full size). Its own size
+    is kept in the image's FULL_SIZE text."""
     reader = QImageReader(path)
     reader.setAutoTransform(True)
-    if size:
-        s = reader.size()
-        if s.isValid() and (s.width() > size or s.height() > size):
-            reader.setScaledSize(s.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio))
+    s = reader.size()
+    if size and s.isValid() and (s.width() > size or s.height() > size):
+        reader.setScaledSize(s.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio))
     img = reader.read()
+    if not img.isNull() and s.isValid():
+        img.setText(FULL_SIZE, f"{s.width()}x{s.height()}")
     return img
+
+
+# Readers for what's on screen (the photo list, thumbnails, previews). The background photo counter waits while
+# any of them has work: on a hard disk, two readers at once make both slow.
+_SCREEN_READERS: weakref.WeakSet = weakref.WeakSet()
+
+
+def screen_reads_pending() -> bool:
+    return any(r.busy() for r in list(_SCREEN_READERS))
 
 
 class ImageLoader(QObject):
@@ -73,51 +94,152 @@ class ImageLoader(QObject):
 
     ready = Signal(object, QImage)
 
-    def __init__(self, threads: int = 3, max_waiting: int = 600, parent=None):
+    def __init__(self, threads: int = 3, max_waiting: int = 600, parent=None,
+                 hold: Callable[[], bool] | None = None):
+        """hold(): while it's true, no new read starts (something more urgent is reading the disk)."""
         super().__init__(parent)
         self._lock = threading.Condition()
         self._waiting: collections.OrderedDict = collections.OrderedDict()   # key -> (path, size)
+        self._low: collections.OrderedDict = collections.OrderedDict()       # read ahead, when nothing else waits
         self._max_waiting = max_waiting
+        self._hold = hold
+        self._active = 0
         self._closed = False
         self._threads = [threading.Thread(target=self._run, daemon=True, name=f"image-loader-{i}")
                          for i in range(threads)]
         for t in self._threads:
             t.start()
+        _SCREEN_READERS.add(self)
 
-    def request(self, key, path: str, size: int | None) -> None:
+    def busy(self) -> bool:
         with self._lock:
-            self._waiting.pop(key, None)
-            self._waiting[key] = (path, size)
-            while len(self._waiting) > self._max_waiting:
-                self._waiting.popitem(last=False)          # the oldest request: long scrolled past
+            return not self._closed and (bool(self._waiting) or bool(self._low) or self._active > 0)
+
+    def request(self, key, path: str, size: int | None, low: bool = False) -> None:
+        """low: read ahead (photos likely to be wanted next), only while nothing else is waiting, in the order
+        asked. A normal request for the same key takes it over."""
+        with self._lock:
+            if low:
+                if key in self._waiting:
+                    return
+                self._low.pop(key, None)
+                self._low[key] = (path, size)
+                while len(self._low) > self._max_waiting:
+                    self._low.popitem(last=False)
+            else:
+                self._low.pop(key, None)
+                self._waiting.pop(key, None)
+                self._waiting[key] = (path, size)
+                while len(self._waiting) > self._max_waiting:
+                    self._waiting.popitem(last=False)          # the oldest request: long scrolled past
             self._lock.notify()
 
     def clear(self) -> None:
         with self._lock:
             self._waiting.clear()
 
+    def clear_low(self) -> None:
+        with self._lock:
+            self._low.clear()
+
     def close(self) -> None:
         with self._lock:
             self._closed = True
             self._waiting.clear()
+            self._low.clear()
             self._lock.notify_all()
 
     def _run(self) -> None:
         while True:
             with self._lock:
-                while not self._waiting and not self._closed:
-                    self._lock.wait()
+                while not self._closed and ((not self._waiting and not self._low)
+                                            or (self._hold is not None and self._hold())):
+                    self._lock.wait(0.03 if self._waiting or self._low else None)
                 if self._closed:
                     return
-                key, (path, size) = self._waiting.popitem(last=True)
+                if self._waiting:
+                    key, (path, size) = self._waiting.popitem(last=True)
+                else:
+                    key, (path, size) = self._low.popitem(last=False)
+                self._active += 1
             try:
                 img = read_image(path, size)
             except Exception:  # noqa: BLE001 - an unreadable file shows as blank
                 img = QImage()
             with self._lock:
+                self._active -= 1
                 if self._closed:
                     return
             self.ready.emit(key, img)
+
+
+class PhotoLister(QObject):
+    """Lists the photos of a sol or a camera folder on a background thread, so a slow disk never freezes the
+    window. Only the newest request matters: older ones still waiting are dropped. Read-ahead requests (low) wait
+    for it. listed(key, photos) arrives on the GUI thread."""
+
+    listed = Signal(object, object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cond = threading.Condition()
+        self._job = None
+        self._low: list = []
+        self._active = False                     # a normal request is being read
+        self._closed = False
+        threading.Thread(target=self._run, daemon=True, name="photo-lister").start()
+        _SCREEN_READERS.add(self)
+
+    def request(self, key, folder: str, rover: str, sol: int, camera: str | None, low: bool = False) -> None:
+        self.request_call(key, functools.partial(photos_in, folder, rover, sol, camera), low)
+
+    def request_call(self, key, fn: Callable[[], object], low: bool = False) -> None:
+        """Any reading of the folder: fn() runs on the background thread; listed(key, its result) follows."""
+        with self._cond:
+            if low:
+                self._low.append((key, fn))
+                del self._low[:-4]               # only the latest few read-ahead lists
+            else:
+                self._job = (key, fn)
+            self._cond.notify()
+
+    def clear_low(self) -> None:
+        with self._cond:
+            self._low.clear()
+
+    def busy(self) -> bool:
+        """A normal request is waiting or being read (read-ahead doesn't count)."""
+        with self._cond:
+            return not self._closed and (self._job is not None or self._active)
+
+    def close(self) -> None:
+        with self._cond:
+            self._closed = True
+            self._job = None
+            self._low.clear()
+            self._cond.notify_all()
+
+    def _run(self) -> None:
+        while True:
+            with self._cond:
+                while self._job is None and not self._low and not self._closed:
+                    self._cond.wait()
+                if self._closed:
+                    return
+                if self._job is not None:
+                    (key, fn), self._job = self._job, None
+                    self._active = True
+                else:
+                    key, fn = self._low.pop(0)
+            try:
+                photos = fn()
+            except Exception:  # noqa: BLE001 - a folder that can't be read shows as empty
+                photos = []
+            with self._cond:
+                self._active = False
+                if self._closed:
+                    return
+            self.listed.emit(key, photos)
 
 
 class CountWorker(QObject):
@@ -136,6 +258,8 @@ class CountWorker(QObject):
         def work():
             batch, last = {}, time.monotonic()
             for sol in sols:
+                while screen_reads_pending() and gen == self._generation:
+                    time.sleep(0.03)                # what's on screen reads the disk first
                 if gen != self._generation:
                     return
                 batch[sol] = sol_photo_count(folder, rover, sol)
@@ -163,6 +287,8 @@ class PhotoGridModel(QAbstractListModel):
         self.rows: dict[str, int] = {}
         self.size = 128
         self.show_camera = True
+        self.caption_fn: Callable[[PhotoFile], str] | None = None        # captions of their own (Favorites)
+        self.is_favorite: Callable[[PhotoFile], bool] = lambda p: False  # draws a star on the thumbnail
         self.cache: collections.OrderedDict = collections.OrderedDict()    # path -> QPixmap at self.size
         self.blank = QPixmap()
         self._make_blank()
@@ -203,7 +329,15 @@ class PhotoGridModel(QAbstractListModel):
             self.dataChanged.emit(self.index(0), self.index(len(self.photos) - 1))
 
     def caption(self, p: PhotoFile) -> str:
+        if self.caption_fn is not None:
+            return self.caption_fn(p)
         return f"{p.camera} {p.number}" if self.show_camera else str(p.number)
+
+    def photo_changed(self, path: str) -> None:
+        """Draw this photo's cell again (its star or caption changed)."""
+        row = self.rows.get(path)
+        if row is not None:
+            self.dataChanged.emit(self.index(row), self.index(row))
 
     def rowCount(self, parent=QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self.photos)
@@ -231,15 +365,20 @@ class PhotoGridModel(QAbstractListModel):
         if not (isinstance(key, tuple) and key[0] == "thumb") or key[2] != self.size:
             return
         path = key[1]
-        row = self.rows.get(path)
-        if row is None:
-            return
         pix = QPixmap.fromImage(img) if not img.isNull() else self.blank
-        self.cache[path] = pix
+        self.cache[path] = pix                   # also photos read ahead, not shown yet
         while len(self.cache) > self._cache_limit():
             self.cache.popitem(last=False)
-        idx = self.index(row)
-        self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.DecorationRole])
+        row = self.rows.get(path)
+        if row is not None:
+            idx = self.index(row)
+            self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.DecorationRole])
+
+    def read_ahead(self, photos: list[PhotoFile]) -> None:
+        """Thumbnails likely to be wanted next, read while nothing else waits."""
+        for p in photos:
+            if p.path not in self.cache:
+                self.loader.request(("thumb", p.path, self.size), p.path, self.size, low=True)
 
 
 class ThumbDelegate(QStyledItemDelegate):
@@ -271,6 +410,15 @@ class ThumbDelegate(QStyledItemDelegate):
             w, h = pix.width() / pix.devicePixelRatio(), pix.height() / pix.devicePixelRatio()
             painter.drawPixmap(QRectF(box.x() + (size - w) / 2, box.y() + (size - h) / 2, w, h), pix,
                                QRectF(pix.rect()))
+        p = index.data(PhotoGridModel.PhotoRole)
+        if p is not None and self.model.is_favorite(p):        # a star in the corner, on a dark disc
+            d = max(16, option.fontMetrics.height() + 2)
+            star = QRectF(box.x() + 2, box.y() + 2, d, d)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 150))
+            painter.drawEllipse(star)
+            painter.setPen(QColor(STAR_COLOR))
+            painter.drawText(star, Qt.AlignmentFlag.AlignCenter, "★")
         text_rect = QRect(r.x() + 4, box.bottom() + 4, r.width() - 8, option.fontMetrics.height() + 2)
         painter.setPen(pal.color(QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text))
         text = option.fontMetrics.elidedText(index.data(Qt.ItemDataRole.DisplayRole) or "",
@@ -447,14 +595,45 @@ class PhotosPage(QWidget):
 
     NEWEST = "newest"
 
-    def __init__(self, settings, folder: Callable[[], str], save_settings: Callable[[], None], parent=None):
+    FAVORITES, FAV_FOLDER, FLIPBOOKS, FLIPBOOK = "favorites", "favfolder", "flipbooks", "flipbook"
+
+    def __init__(self, settings, folder: Callable[[], str], save_settings: Callable[[], None], parent=None,
+                 favorites: FavoritesStore | None = None):
         super().__init__(parent)
         self.settings, self.folder, self.save_settings = settings, folder, save_settings
-        self.loader = ImageLoader(threads=3)
+        self.favs = favorites if favorites is not None else FavoritesStore(None)
+        # Questions the page asks (replaced in tests, so no dialog ever opens there)
+        self.ask_text: Callable[[str, str, str], str | None] = self._ask_text
+        self.confirm: Callable[[str, str], bool] = self._confirm
+        self.photo_time: Callable[[PhotoFile], str | None] | None = None      # when a photo was taken, if known
+        self.fav_item: QTreeWidgetItem | None = None
+        self.books_item: QTreeWidgetItem | None = None
+        self.flip_book: Flipbook | None = None          # the saved flipbook shown, if any
+        self.flip_dirty = False
+        self.flip_ctx: tuple[str, int, str] | None = None    # (rover, sol, camera) the flipbook bar is set for
+        self.flip_source: list[PhotoFile] = []          # that camera folder's photos
+        # Thumbnails wait while a photo list is read: the list decides what's shown, so it gets the disk first.
+        self.loader = ImageLoader(threads=3, hold=lambda: getattr(self, "lister", None) is not None
+                                  and self.lister.busy())
         self.big_loader = ImageLoader(threads=1, max_waiting=8)       # previews and full-size images
         self.big_loader.ready.connect(self._big_ready)
+        self.loader.ready.connect(self._note_size)
         self.counter = CountWorker(self)
         self.counter.counted.connect(self._counted)
+        self.lister = PhotoLister(self)
+        self.lister.listed.connect(self._listed)
+        self.list_key = None                                          # (folder, rover, tree key) being listed
+        self.select_path: str | None = None                           # a photo to choose once its list arrives
+        self.goto_note: str | None = None                             # Go To Sol's "nearest sol" note
+        self.expand_sol: int | None = None                            # a sol to open once its list arrives
+        self.image_sizes: dict[str, str] = {}                         # path -> "1,200 × 900 pixels"
+        self.loading_timer = QTimer(self, singleShot=True, interval=250)
+        self.loading_timer.timeout.connect(self._show_loading)
+        self.list_cache: collections.OrderedDict = collections.OrderedDict()   # (folder, rover, key) -> photos
+        self.ahead_timer = QTimer(self, singleShot=True, interval=400)         # neighbours, once settled
+        self.ahead_timer.timeout.connect(self._read_ahead_neighbours)
+        self.goto_timer = QTimer(self, singleShot=True, interval=250)          # Go To Sol, once typing pauses
+        self.goto_timer.timeout.connect(self._read_ahead_goto)
         self.counts: dict[tuple[str, str, int], int] = {}             # (folder, rover, sol) -> photos
         self.sol_items: dict[int, QTreeWidgetItem] = {}
         self.newest: collections.deque[PhotoFile] = collections.deque(maxlen=NEWEST_MAX)
@@ -465,6 +644,15 @@ class PhotosPage(QWidget):
         self.full_cache: collections.OrderedDict = collections.OrderedDict()      # path -> QPixmap, a few
         self.extra_details: Callable[[PhotoFile], list[tuple[str, str]]] | None = None   # details from elsewhere
         self._build()
+        self.model.is_favorite = lambda p: self.favs.is_favorite(fav_key(p.rover, p.sol, p.camera, p.number))
+        self._build_flipbook()
+        # F: favorite; P: play or pause the flipbook. Not while typing (a text box takes its own keys).
+        self.shortcuts = {}
+        for key, slot in (("F", self.toggle_favorite), ("P", self._play_key)):
+            sc = QShortcut(QKeySequence(key), self)
+            sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            sc.activated.connect(slot)
+            self.shortcuts[key] = sc
         self.size_timer = QTimer(self, singleShot=True, interval=150)
         self.size_timer.timeout.connect(self._apply_thumb_size)
         self.dirty_sols: set[tuple[str, str, int]] = set()            # sols a download added photos to
@@ -493,6 +681,7 @@ class PhotosPage(QWidget):
         self.goto.setValidator(QIntValidator(0, 100000))
         self.goto.setPlaceholderText("Number")
         self.goto.returnPressed.connect(self._go_to_sol)
+        self.goto.textEdited.connect(lambda _t: self.goto_timer.start())     # read it ahead while typing
         row.addWidget(self.goto, 1)
         bl.addLayout(row)
         self.tree = QTreeWidget()
@@ -509,6 +698,8 @@ class PhotosPage(QWidget):
         self.tree.setUniformRowHeights(True)
         self.tree.itemExpanded.connect(self._fill_cameras)
         self.tree.currentItemChanged.connect(lambda cur, _prev: self._tree_chosen(cur))
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._show_tree_menu)
         bl.addWidget(self.tree, 1)
         self.browse_note = _label("", "muted", wrap=True)
         bl.addWidget(self.browse_note)
@@ -582,10 +773,16 @@ class PhotosPage(QWidget):
         bar.addWidget(self.zoom_label)
         bar.addWidget(self.fit_btn)
         bar.addWidget(self.actual_btn)
+        self.fav_full_btn = QPushButton("☆  Favorite")
+        self.fav_full_btn.setToolTip("Add to Favorites, or remove (F)")
+        self.fav_full_btn.clicked.connect(self.toggle_favorite)
+        bar.addWidget(self.fav_full_btn)
         fl.addLayout(bar)
         self.viewer = ImageView()
         self.viewer.zoom_changed.connect(self._show_zoom)
         fl.addWidget(self.viewer, 1)
+        self.flip_bar = FlipbookBar()
+        fl.addWidget(self.flip_bar)
         self.stack.addWidget(self.grid)
         self.stack.addWidget(self.empty)
         self.stack.addWidget(full)
@@ -613,6 +810,22 @@ class PhotosPage(QWidget):
         self.detail_rows: list[tuple[QLabel, QLabel]] = []
         self.detail_note = _label("", "muted", wrap=True)
         dl.addWidget(self.detail_note)
+        self.note_row = QWidget()
+        nl = QHBoxLayout(self.note_row)
+        nl.setContentsMargins(0, 0, 0, 0)
+        nl.addWidget(_label("Note", "rowHead"))
+        self.note_edit = QLineEdit()
+        self.note_edit.setPlaceholderText("Why it's a favorite (optional)")
+        self.note_edit.editingFinished.connect(self._save_note)
+        nl.addWidget(self.note_edit, 1)
+        dl.addWidget(self.note_row)
+        fav_row = QHBoxLayout()
+        self.fav_btn = QPushButton("☆  Add to Favorites")
+        self.fav_btn.setToolTip("F")
+        self.fav_btn.clicked.connect(self.toggle_favorite)
+        fav_row.addWidget(self.fav_btn)
+        fav_row.addStretch()
+        dl.addLayout(fav_row)
         btns = QHBoxLayout()
         self.full_btn = QPushButton("View Full Size")
         self.full_btn.clicked.connect(self.open_full)
@@ -666,6 +879,9 @@ class PhotosPage(QWidget):
         return self.rover_box.currentText()
 
     def _rover_chosen(self) -> None:
+        self._forget_listing()
+        self.expand_sol = None
+        self.goto_note = None
         self.current = None
         self.view_key = None
         self._reload_sols(keep_view=False)
@@ -687,9 +903,7 @@ class PhotosPage(QWidget):
         self.tree.blockSignals(True)
         self.tree.clear()
         self.sol_items = {}
-        self.newest_item = None
-        if self.newest:
-            self._add_newest_item()
+        self._add_special_items()
         for sol in sols:
             self.sol_items[sol] = self._make_sol_item(folder, rover, sol)
         self.tree.addTopLevelItems(list(self.sol_items.values()))
@@ -733,19 +947,69 @@ class PhotosPage(QWidget):
             item.setToolTip(0, f"Around {fmt_date(d)} on Earth")
         return item
 
-    def _add_newest_item(self) -> None:
-        self.newest_item = QTreeWidgetItem(["Newest Downloads", f"{len(self.newest):,}"])
-        self.newest_item.setData(0, Qt.ItemDataRole.UserRole, (self.NEWEST,))
-        self.newest_item.setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.newest_item.setToolTip(0, "Photos saved since the app started, newest last, from every rover")
-        f = self.newest_item.font(0)
+    @staticmethod
+    def _top_item(text: str, key, tip: str) -> QTreeWidgetItem:
+        item = QTreeWidgetItem([text, ""])
+        item.setData(0, Qt.ItemDataRole.UserRole, key)
+        item.setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        item.setToolTip(0, tip)
+        f = item.font(0)
         f.setBold(True)
-        self.newest_item.setFont(0, f)
-        self.tree.insertTopLevelItem(0, self.newest_item)
+        item.setFont(0, f)
+        return item
+
+    def _add_special_items(self) -> None:
+        """Favorites and Flipbooks (every rover) at the top, then Newest Downloads once there are any."""
+        self.fav_item = self._top_item("★  Favorites", (self.FAVORITES,),
+                                       "Photos, sols and camera folders you marked, from every rover")
+        self.books_item = self._top_item("Flipbooks", (self.FLIPBOOKS,), "Flipbooks you saved")
+        self.tree.insertTopLevelItem(0, self.fav_item)
+        self.tree.insertTopLevelItem(1, self.books_item)
+        self._fill_special_items()
+        self.newest_item = None
+        if self.newest:
+            self._add_newest_item()
+
+    def _fill_special_items(self) -> None:
+        """Favorites' count and folder rows, and the saved flipbooks (after any change to them)."""
+        if self.fav_item is None:
+            return
+        for item in (self.fav_item, self.books_item):
+            for child in item.takeChildren():
+                del child
+        self.fav_item.setText(1, f"{len(self.favs.favorites):,}")
+        for f in self.favs.folders():               # sols and camera folders: choose one to go there
+            child = QTreeWidgetItem([f.note or f.label(), ""])
+            child.setData(0, Qt.ItemDataRole.UserRole, (self.FAV_FOLDER, f.rover, f.sol, f.camera))
+            child.setToolTip(0, f.label() + (f"\n{f.note}" if f.note else ""))
+            self.fav_item.addChild(child)
+        self.books_item.setText(1, f"{len(self.favs.flipbooks):,}")
+        for b in self.favs.flipbooks:
+            child = QTreeWidgetItem([b.name, ""])
+            child.setData(0, Qt.ItemDataRole.UserRole, (self.FLIPBOOK, b.id))
+            child.setToolTip(0, f"{b.rover} · Sol {b.sol:,} · {camera_name(b.camera)} · photos {b.first}–{b.last}"
+                                f" · {b.fps:g} photos/s")
+            self.books_item.addChild(child)
+
+    def _add_newest_item(self) -> None:
+        self.newest_item = self._top_item("Newest Downloads", (self.NEWEST,),
+                                          "Photos saved since the app started, newest last, from every rover")
+        self.newest_item.setText(1, f"{len(self.newest):,}")
+        self.tree.insertTopLevelItem(2 if self.fav_item is not None else 0, self.newest_item)
 
     def _find_item(self, key) -> QTreeWidgetItem | None:
         if key[0] == self.NEWEST:
             return self.newest_item
+        if key[0] == self.FAVORITES:
+            return self.fav_item
+        if key[0] == self.FLIPBOOKS:
+            return self.books_item
+        if key[0] in (self.FAV_FOLDER, self.FLIPBOOK):
+            parent = self.fav_item if key[0] == self.FAV_FOLDER else self.books_item
+            if parent is None:
+                return None
+            return next((parent.child(i) for i in range(parent.childCount())
+                         if parent.child(i).data(0, Qt.ItemDataRole.UserRole) == key), parent)
         item = self.sol_items.get(key[1])
         if item is None or key[0] == "sol":
             return item
@@ -772,6 +1036,9 @@ class PhotosPage(QWidget):
 
     def _update_browse_note(self) -> None:
         folder, rover = self.loaded_folder or "", self._rover()
+        if self.goto_note and rover:
+            self.browse_note.setText(self.goto_note)
+            return
         if not rover:
             self.browse_note.setText("")
             return
@@ -790,6 +1057,14 @@ class PhotosPage(QWidget):
             return
         folder, rover, sol = self.loaded_folder or "", self._rover(), key[1]
         cams = cameras_in(folder, rover, sol)
+        self._add_cameras(item, cams)
+        total = sum(n for _, n in cams)
+        self.counts[(folder, rover, sol)] = total
+        item.setText(1, f"{total:,}")
+
+    def _add_cameras(self, item: QTreeWidgetItem, cams: list[tuple[str, int]]) -> None:
+        """The sol's camera rows: (camera, photos) for each camera folder that has photos."""
+        sol = item.data(0, Qt.ItemDataRole.UserRole)[1]
         for cam, n in cams:
             child = QTreeWidgetItem([cam, f"{n:,}"])
             child.setData(0, Qt.ItemDataRole.UserRole, ("camera", sol, cam))
@@ -798,9 +1073,6 @@ class PhotosPage(QWidget):
             item.addChild(child)
         if not cams:
             item.setChildIndicatorPolicy(QTreeWidgetItem.ChildIndicatorPolicy.DontShowIndicator)
-        total = sum(n for _, n in cams)
-        self.counts[(folder, rover, sol)] = total
-        item.setText(1, f"{total:,}")
 
     def _go_to_sol(self) -> None:
         text = self.goto.text().strip()
@@ -810,10 +1082,19 @@ class PhotosPage(QWidget):
         sols = sorted(self.sol_items)
         best = min(sols, key=lambda s: (abs(s - want), s))       # the sol itself, or the nearest one
         item = self.sol_items[best]
+        self.expand_sol = None
+        if item.childCount():
+            item.setExpanded(True)
+        else:
+            self.expand_sol = best                                 # its cameras come with its photo list
         self.tree.setCurrentItem(item)
+        if self.expand_sol == best and self.list_key is None:    # shown already, so no list is coming
+            self.expand_sol = None
+            item.setExpanded(True)
         self.tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtTop)
-        self.browse_note.setText(self.browse_note.text() if best == want else
-                                 f"No photos for sol {want}; showing sol {best}, the nearest one.")
+        # Kept until something else is chosen (counts arriving used to replace it at once).
+        self.goto_note = None if best == want else f"No photos for sol {want}; showing sol {best}, the nearest one."
+        self._update_browse_note()
 
     # ---- what the grid shows -----------------------------------------------------------------------------
 
@@ -822,32 +1103,599 @@ class PhotosPage(QWidget):
             return
         key = item.data(0, Qt.ItemDataRole.UserRole)
         folder, rover = self.loaded_folder or "", self._rover()
+        self._forget_listing()
+        if self.goto_note:                             # Go To Sol sets its note again after choosing
+            self.goto_note = None
+            self._update_browse_note()
+        self._pause_flipbook(select=False)
+        if key[0] != self.FLIPBOOK and self.flip_book is not None:      # left a saved flipbook
+            self.flip_book, self.flip_ctx = None, None
+            self.flip_bar.set_book(None, dirty=False)
         if key[0] == self.NEWEST:
             photos = list(self.newest)
             title = f"Newest Downloads · {count_text(len(photos), 'photo')}"
             self._show_photos(key, photos, title, show_camera=True, empty="No photos downloaded yet.")
             return
+        if key[0] == self.FAVORITES:
+            self._show_favorites()
+            return
+        if key[0] == self.FLIPBOOKS:
+            self._show_message(key, "Flipbooks",
+                               "Saved flipbooks are listed under Flipbooks. To make one, open a photo at full size, "
+                               "choose From and To below it, and click Save Flipbook…")
+            return
+        if key[0] == self.FAV_FOLDER:           # after this signal: going there rebuilds the list
+            QTimer.singleShot(0, lambda: self._go_to_folder(key[1], key[2], key[3]))
+            return
+        if key[0] == self.FLIPBOOK:
+            self._open_flipbook(key[1])
+            return
+        # Listed on a background thread: on a hard disk, reading a sol's folders the first time takes a moment.
+        # What was shown stays until the list arrives ("Loading photos…" if that takes a while). A list read
+        # recently or ahead is shown at once, and read again in the background in case the folder changed.
+        list_key = (folder, rover, key)
+        self.loader.clear()                            # thumbnails still waiting for the old view
+        cam = key[2] if key[0] == "camera" else None
+        cached = self.list_cache.get(list_key)
+        if cached is not None:
+            self.list_cache.move_to_end(list_key)
+            self._apply_list(list_key, cached)
+            self.lister.request(("check", list_key), folder, rover, key[1], cam)
+            return
+        self.list_key = list_key
+        self.grid_title.setText(f"{self._view_title(rover, key)} · Loading…")
+        self.lister.request(("view", list_key), folder, rover, key[1], cam)
+        self.loading_timer.start()
+
+    def _forget_listing(self) -> None:
+        """A photo list still on its way is no longer wanted, nor what was being read ahead."""
+        self.list_key = None
+        self.loading_timer.stop()
+        self.ahead_timer.stop()
+        self.lister.clear_low()
+        self.loader.clear_low()
+
+    @staticmethod
+    def _view_title(rover: str, key) -> str:
+        return f"{rover} · Sol {key[1]} · {camera_name(key[2]) if key[0] == 'camera' else 'All Cameras'}"
+
+    def _show_loading(self) -> None:
+        if self.list_key is not None:
+            self.model.set_photos([], True)
+            self.empty.setText("Loading photos…")
+            if self.stack.currentWidget() is not self.full_page:
+                self.stack.setCurrentWidget(self.empty)
+
+    def _remember_list(self, list_key, photos: list[PhotoFile]) -> None:
+        self.list_cache[list_key] = photos
+        self.list_cache.move_to_end(list_key)
+        while len(self.list_cache) > LIST_CACHE_MAX:
+            self.list_cache.popitem(last=False)
+
+    def _listed(self, job, photos: list[PhotoFile]) -> None:
+        if not (isinstance(job, tuple) and len(job) == 2):
+            return
+        kind, list_key = job
+        if list_key[0] != (self.loaded_folder or ""):
+            return                                     # another photo folder by now
+        if kind in ("favorites", "flipbook"):          # from every rover
+            if list_key == self.list_key:
+                if kind == "favorites":
+                    self._apply_favorites(*photos)
+                else:
+                    self._apply_flipbook(list_key, photos)
+            return
+        if list_key[1] != self._rover():
+            return                                     # another rover by now
+        self._remember_list(list_key, photos)
+        if kind == "ahead":
+            self.model.read_ahead(photos[:self._first_screen()])
+        elif kind == "check":                          # shown from memory: did the folder change since?
+            if (self.list_key is None and self.view_key == list_key[2]
+                    and [p.path for p in photos] != [p.path for p in self.model.photos]):
+                if self.current is not None:
+                    self.select_path = self.current.path
+                self._apply_list(list_key, photos)
+        elif list_key == self.list_key:                # not an older choice
+            self._apply_list(list_key, photos)
+
+    def _first_screen(self) -> int:
+        """About how many thumbnails fit in the grid."""
+        cell = self.grid.gridSize()
+        vp = self.grid.viewport().size()
+        if cell.width() <= 0 or cell.height() <= 0:
+            return 30
+        return max(12, (max(1, vp.width() // cell.width())) * (vp.height() // cell.height() + 1))
+
+    def _read_ahead(self, sols: list[int]) -> None:
+        """Read these sols' photo lists and first thumbnails while nothing else needs the disk."""
+        folder, rover = self.loaded_folder or "", self._rover()
+        if not folder or not rover:
+            return
+        self.lister.clear_low()
+        self.loader.clear_low()
+        for sol in sols:
+            list_key = (folder, rover, ("sol", sol))
+            cached = self.list_cache.get(list_key)
+            if cached is not None:
+                self.model.read_ahead(cached[:self._first_screen()])
+            else:
+                self.lister.request(("ahead", list_key), folder, rover, sol, None, low=True)
+
+    def _read_ahead_goto(self) -> None:
+        """Go To Sol: the sol being typed, so it's ready when Enter is pressed."""
+        text = self.goto.text().strip()
+        if text.isdigit() and self.sol_items:
+            want = int(text)
+            self._read_ahead([min(self.sol_items, key=lambda s: (abs(s - want), s))])
+
+    def _read_ahead_neighbours(self) -> None:
+        """The sols before and after the one shown, for stepping through them."""
+        if not self.view_key or self.view_key[0] not in ("sol", "camera") or self.list_key is not None:
+            return
+        sols = sorted(self.sol_items)
+        try:
+            i = sols.index(self.view_key[1])
+        except ValueError:
+            return
+        self._read_ahead([sols[j] for j in (i + 1, i - 1) if 0 <= j < len(sols)])
+
+    def _forget_lists(self, folder: str, rover: str, sol: int) -> None:
+        """A download changed this sol's folders: its lists in memory are out of date."""
+        for k in [k for k in self.list_cache if k[0] == folder and k[1] == rover and k[2][1] == sol]:
+            del self.list_cache[k]
+
+    def _apply_list(self, list_key, photos: list[PhotoFile]) -> None:
+        """Show a sol's or camera's photos (its list just arrived, or was in memory)."""
+        self.list_key = None
+        self.loading_timer.stop()
+        folder, rover, key = list_key
         sol = key[1]
+        item = self.sol_items.get(sol)
+        if key[0] == "sol" and item is not None:      # the sol's cameras and count, from the same list
+            cams = collections.Counter(p.camera for p in photos)
+            if not item.childCount():
+                self._add_cameras(item, sorted(cams.items()))
+            self.counts[(folder, rover, sol)] = len(photos)
+            item.setText(1, f"{len(photos):,}")
+            self._update_browse_note()
+        if self.expand_sol == sol and item is not None:
+            self.expand_sol = None
+            item.setExpanded(True)
+        title = f"{self._view_title(rover, key)} · {count_text(len(photos), 'photo')}"
         if key[0] == "sol":
-            photos = photos_in(folder, rover, sol)
-            title = f"{rover} · Sol {sol} · All Cameras · {count_text(len(photos), 'photo')}"
             self._show_photos(key, photos, title, show_camera=True, empty="No photos in this sol's folder.")
         else:
-            cam = key[2]
-            photos = photos_in(folder, rover, sol, cam)
-            title = f"{rover} · Sol {sol} · {camera_name(cam)} · {count_text(len(photos), 'photo')}"
             self._show_photos(key, photos, title, show_camera=False, empty="No photos in this camera's folder.")
+        self.ahead_timer.start()                       # then the sols before and after, while the disk is free
 
-    def _show_photos(self, key, photos: list[PhotoFile], title: str, show_camera: bool, empty: str) -> None:
+    def _show_message(self, key, title: str, text: str) -> None:
+        """A view with no photos, only a message (Flipbooks, or Favorites without a photo folder)."""
+        self._show_photos(key, [], title, show_camera=True, empty=text)
+
+    # ---- favorites -----------------------------------------------------------------------------------------
+
+    def _show_favorites(self) -> None:
+        folder, rover = self.loaded_folder or "", self._rover()
+        key = (self.FAVORITES,)
+        if not folder or not os.path.isdir(folder):
+            self._show_message(key, "Favorites", "Choose a photo folder on the Download page to see your favorites.")
+            return
+        keys = [f.key for f in self.favs.photos()]
+        self.list_key = (folder, rover, key)
+        self.loader.clear()
+        self.grid_title.setText("Favorites · Loading…")
+        self.lister.request_call(("favorites", self.list_key), functools.partial(find_photos, folder, keys))
+        self.loading_timer.start()
+
+    def _apply_favorites(self, photos: list[PhotoFile], missing: int) -> None:
+        self.list_key = None
+        self.loading_timer.stop()
+        title = f"Favorites · {count_text(len(photos), 'photo')}"
+        if missing:
+            title += f" · {missing:,} not in this photo folder"
+        if not self.favs.photos():
+            empty = ("No favorite photos yet. Choose a photo and click Add to Favorites, or press F. Sols and "
+                     "camera folders you add (right-click them) are listed under Favorites.")
+        else:
+            empty = "None of your favorite photos are in this photo folder."
+        self._show_photos((self.FAVORITES,), photos, title, show_camera=True, empty=empty,
+                          caption_fn=self._favorite_caption)
+
+    def _favorite_caption(self, p: PhotoFile) -> str:
+        fav = self.favs.get(fav_key(p.rover, p.sol, p.camera, p.number))
+        return (fav.note if fav and fav.note else "") or f"{p.sol} · {p.camera} {p.number}"   # rover: tooltip
+
+    def _go_to_folder(self, rover: str, sol: int, camera: str | None) -> None:
+        """A favorite sol or camera folder: show it in its rover's list."""
+        if self.rover_box.findText(rover) < 0:
+            self._show_message((self.FAVORITES,), "Favorites", f"There's no {rover} folder in this photo folder.")
+            return
+        if self._rover() != rover:
+            self.rover_box.setCurrentText(rover)
+        item = self.sol_items.get(sol)
+        if item is None:
+            self._show_message((self.FAVORITES,), "Favorites", f"Sol {sol:,} isn't in this photo folder.")
+            return
+        if camera:
+            self._fill_cameras(item)
+            item.setExpanded(True)
+            item = self._find_item(("camera", sol, camera))
+        else:
+            item.setExpanded(True)
+        self.tree.setCurrentItem(item)
+        self.tree.scrollToItem(item)
+
+    def _key_of(self, p: PhotoFile):
+        return fav_key(p.rover, p.sol, p.camera, p.number)
+
+    def toggle_favorite(self) -> None:
+        """F, or the star buttons: add the photo shown to Favorites, or take it out."""
+        p = self.player.shown() if self.player.playing else self.current
+        if p is None:
+            return
+        key = self._key_of(p)
+        if self.favs.is_favorite(key):
+            self.favs.remove(key)
+        else:
+            self.favs.add(*key)
+        self.model.photo_changed(p.path)
+        self._update_fav_controls()
+        self._refresh_special()
+
+    def _update_fav_controls(self) -> None:
+        p = self.current
+        fav = self.favs.get(self._key_of(p)) if p is not None else None
+        self.fav_btn.setEnabled(p is not None)
+        self.fav_full_btn.setEnabled(p is not None)
+        self.fav_btn.setText("★  In Favorites" if fav else "☆  Add to Favorites")
+        self.fav_btn.setToolTip("Remove from Favorites (F)" if fav else "Add to Favorites (F)")
+        self.fav_full_btn.setText("★  Favorite" if fav else "☆  Favorite")
+        self.note_row.setVisible(fav is not None)
+        if fav is not None and not self.note_edit.hasFocus():
+            self.note_edit.setText(fav.note)
+
+    def _save_note(self) -> None:
+        p = self.current
+        if p is None:
+            return
+        self.favs.set_note(self._key_of(p), self.note_edit.text().strip())
+        self.model.photo_changed(p.path)
+
+    def _refresh_special(self) -> None:
+        """Favorites' and Flipbooks' rows changed: rebuild them, keeping what's chosen (without choosing again)."""
+        cur = self.tree.currentItem()
+        key = cur.data(0, Qt.ItemDataRole.UserRole) if cur is not None else None
+        self.tree.blockSignals(True)
+        self._fill_special_items()
+        if key is not None:
+            item = self._find_item(key)
+            if item is not None:
+                self.tree.setCurrentItem(item)
+        self.tree.blockSignals(False)
+
+    def _tree_menu(self, item: QTreeWidgetItem | None) -> QMenu | None:
+        """Right-click: add a sol or camera folder to Favorites; edit or remove a favorite; rename or delete a
+        flipbook."""
+        key = item.data(0, Qt.ItemDataRole.UserRole) if item is not None else None
+        if not key:
+            return None
+        menu = QMenu(self)
+        rover = self._rover()
+        if key[0] in ("sol", "camera"):
+            k = fav_key(rover, key[1], key[2] if key[0] == "camera" else None)
+            what = f"Sol {key[1]:,}" if key[0] == "sol" else f"the {key[2]} Folder"
+            if self.favs.is_favorite(k):
+                menu.addAction(f"Remove {what} from Favorites", lambda: self._remove_folder(k))
+            else:
+                menu.addAction(f"Add {what} to Favorites", lambda: self._add_folder(k))
+        elif key[0] == self.FAV_FOLDER:
+            k = fav_key(key[1], key[2], key[3])
+            menu.addAction("Edit Note…", lambda: self._edit_folder_note(k))
+            menu.addAction("Remove from Favorites", lambda: self._remove_folder(k))
+        elif key[0] == self.FLIPBOOK:
+            menu.addAction("Rename…", lambda: self._rename_flipbook(key[1]))
+            menu.addAction("Delete…", lambda: self._delete_flipbook(key[1]))
+        else:
+            return None
+        return menu
+
+    def _show_tree_menu(self, pos) -> None:
+        menu = self._tree_menu(self.tree.itemAt(pos))
+        if menu is not None:
+            menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def _add_folder(self, k) -> None:
+        self.favs.add(*k)
+        self._refresh_special()
+
+    def _remove_folder(self, k) -> None:
+        self.favs.remove(k)
+        self._refresh_special()
+
+    def _edit_folder_note(self, k) -> None:
+        fav = self.favs.get(k)
+        if fav is None:
+            return
+        text = self.ask_text("Favorite Note", f"Note for {fav.label()}:", fav.note)
+        if text is not None:
+            self.favs.set_note(k, text.strip())
+            self._refresh_special()
+
+    def _ask_text(self, title: str, label: str, default: str) -> str | None:
+        text, ok = QInputDialog.getText(self, title, label, QLineEdit.EchoMode.Normal, default)
+        return text if ok else None
+
+    def _confirm(self, title: str, text: str) -> bool:
+        return QMessageBox.question(self, title, text) == QMessageBox.StandardButton.Yes
+
+    # ---- the flipbook --------------------------------------------------------------------------------------
+
+    def _build_flipbook(self) -> None:
+        self.player = FlipbookPlayer(self._frame_size, self)
+        _SCREEN_READERS.add(self.player.loader)
+        self.player.frame.connect(self._flip_frame)
+        self.player.status.connect(self.flip_bar.status.setText)
+        self.player.finished.connect(lambda: self._pause_flipbook(select=True, finished=True))
+        bar = self.flip_bar
+        bar.play_btn.clicked.connect(self._play_key)
+        bar.from_here.clicked.connect(lambda: self._set_bound(bar.from_edit))
+        bar.to_here.clicked.connect(lambda: self._set_bound(bar.to_edit))
+        bar.from_edit.editingFinished.connect(self._flip_range_changed)
+        bar.to_edit.editingFinished.connect(self._flip_range_changed)
+        bar.speed.valueChanged.connect(self._flip_speed)
+        bar.loop_box.toggled.connect(self._flip_options)
+        bar.same_box.toggled.connect(self._flip_options)
+        bar.save_btn.clicked.connect(lambda: self._save_flipbook(as_new=False))
+        bar.save_new_btn.clicked.connect(lambda: self._save_flipbook(as_new=True))
+        bar.delete_btn.clicked.connect(lambda: self.flip_book and self._delete_flipbook(self.flip_book.id))
+
+    def _frame_size(self) -> int:
+        ratio = self.viewer.devicePixelRatioF()
+        return max(640, int(max(self.viewer.width(), self.viewer.height()) * ratio))
+
+    def _camera_photos(self, p: PhotoFile) -> list[PhotoFile]:
+        """All photos of p's camera folder, from memory where possible."""
+        folder = self.loaded_folder or ""
+        cached = self.list_cache.get((folder, p.rover, ("camera", p.sol, p.camera)))
+        if cached is not None:
+            return cached
+        if (p.rover == self._rover() and self.view_key and self.view_key[0] in ("sol", "camera")
+                and self.view_key[1] == p.sol):
+            return [x for x in self.model.photos if x.camera == p.camera]
+        return photos_in(folder, p.rover, p.sol, p.camera)
+
+    def _sync_flip_ctx(self, p: PhotoFile) -> None:
+        """The bar follows the photo's camera folder: From and To start as its first and last photo."""
+        ctx = (p.rover, p.sol, p.camera)
+        if ctx == self.flip_ctx:
+            return
+        if self.flip_book is not None:                 # left the saved flipbook's folder
+            self.flip_book = None
+            self.flip_bar.set_book(None, dirty=False)
+        self.flip_ctx = ctx
+        self.flip_source = self._camera_photos(p)
+        nums = [x.number for x in self.flip_source]
+        bar = self.flip_bar
+        bar.from_edit.setText(str(min(nums)) if nums else "")
+        bar.to_edit.setText(str(max(nums)) if nums else "")
+        bar.status.setText(f"{camera_name(p.camera)} · {count_text(len(nums), 'photo')}" if nums else "")
+
+    def _bounds(self) -> tuple[int, int]:
+        nums = [x.number for x in self.flip_source] or [0]
+        bar = self.flip_bar
+        first = int(bar.from_edit.text()) if bar.from_edit.text().isdigit() else min(nums)
+        last = int(bar.to_edit.text()) if bar.to_edit.text().isdigit() else max(nums)
+        return (first, last) if first <= last else (last, first)
+
+    def _frames(self) -> list[PhotoFile]:
+        """The photos From to To, in the order they were taken when that's known for all of them."""
+        first, last = self._bounds()
+        frames = [x for x in self.flip_source if first <= x.number <= last]
+        if self.photo_time is not None and frames:
+            times = [self.photo_time(x) for x in frames]
+            if all(times):
+                order = sorted(range(len(frames)), key=lambda i: (times[i], frames[i].number))
+                frames = [frames[i] for i in order]
+        return frames
+
+    def _play_key(self) -> None:
+        """P, or Play: play the flipbook from the photo shown (opening the full-size view), or pause it."""
+        if self.player.playing:
+            self._pause_flipbook(select=True)
+            return
+        if self.current is None:
+            return
+        if self.stack.currentWidget() is not self.full_page:
+            self.open_full()
+        self._play()
+
+    def _play(self) -> None:
+        p = self.player.shown() if self.player.frames else None
+        p = self.current if p is None or (self.current and self.current.path != p.path) else p
+        if p is None:
+            return
+        self._sync_flip_ctx(p)
+        frames = self._frames()
+        if not frames:
+            self.flip_bar.status.setText("No photos between From and To")
+            return
+        start = next((i for i, x in enumerate(frames) if x.path == p.path), 0)
+        self._apply_flip_options()
+        self.player.load(frames, start)
+        self.player.play()
+        self.flip_bar.set_playing(True)
+
+    def _apply_flip_options(self) -> None:
+        bar = self.flip_bar
+        self.player.set_fps(bar.speed.value())
+        self.player.loop = bar.loop_box.isChecked()
+        self.player.same_size = bar.same_box.isChecked()
+
+    def _flip_frame(self, p: PhotoFile, pix: QPixmap) -> None:
+        if self.stack.currentWidget() is self.full_page:
+            self.viewer.set_image(pix)
+
+    def _pause_flipbook(self, select: bool, finished: bool = False) -> None:
+        """Stop playing. select: the frame shown becomes the chosen photo (details, full size), if it was playing
+        (or just finished)."""
+        if not hasattr(self, "player"):
+            return
+        was = self.player.playing or finished
+        self.player.pause()
+        self.flip_bar.set_playing(False)
+        p = self.player.shown()
+        if not was or not select or p is None:
+            return
+        if self.current is not None and self.current.path == p.path:
+            if self.stack.currentWidget() is self.full_page:
+                self._load_full(p)               # the full-size image instead of the frame
+            return
+        row = self.model.rows.get(p.path)
+        if row is not None:
+            self.grid.setCurrentIndex(self.model.index(row))
+        else:
+            self.current = p
+            self._show_details(p)
+            if self.stack.currentWidget() is self.full_page:
+                self._load_full(p)
+
+    def _set_bound(self, edit: QLineEdit) -> None:
+        p = self.player.shown() if self.player.playing else self.current
+        if p is None:
+            return
+        self._sync_flip_ctx(p)
+        edit.setText(str(p.number))
+        self._flip_range_changed()
+
+    def _mark_dirty(self) -> None:
+        if self.flip_book is not None:
+            self.flip_dirty = True
+            self.flip_bar.set_book(self.flip_book.name, dirty=True)
+
+    def _flip_range_changed(self) -> None:
+        self._mark_dirty()
+        if self.player.playing:                   # play the new range from the frame shown
+            self.player.pause()
+            self._play()
+
+    def _flip_speed(self, fps: int) -> None:
+        self.player.set_fps(fps)
+        self._mark_dirty()
+
+    def _flip_options(self) -> None:
+        self._apply_flip_options()
+        self._mark_dirty()
+
+    def _save_flipbook(self, as_new: bool) -> None:
+        p = self.current or self.player.shown()
+        if self.flip_ctx is None and p is not None:
+            self._sync_flip_ctx(p)
+        if self.flip_ctx is None:
+            return
+        first, last = self._bounds()
+        bar = self.flip_bar
+        if self.flip_book is not None and not as_new:
+            b = self.flip_book
+        else:
+            rover, sol, cam = self.flip_ctx
+            default = f"{rover} · Sol {sol:,} · {camera_name(cam)}"
+            name = self.ask_text("Save Flipbook" if not as_new else "Save as New Flipbook", "Name:", default)
+            if not name or not name.strip():
+                return
+            b = Flipbook(name=name.strip(), rover=rover, sol=sol, camera=cam, first=first, last=last)
+        b.first, b.last = first, last
+        b.fps, b.loop, b.same_size = float(bar.speed.value()), bar.loop_box.isChecked(), bar.same_box.isChecked()
+        self.favs.save_flipbook(b)
+        self.flip_book, self.flip_dirty = b, False
+        bar.set_book(b.name, dirty=False)
+        self._refresh_special()
+
+    def _open_flipbook(self, book_id: str) -> None:
+        b = self.favs.flipbook(book_id)
+        folder = self.loaded_folder or ""
+        if b is None:
+            return
+        self.flip_book, self.flip_dirty = b, False
+        key = (self.FLIPBOOK, b.id)
+        if not folder or not os.path.isdir(folder):
+            self._show_message(key, b.name, "Choose a photo folder on the Download page to play this flipbook.")
+            return
+        self.list_key = (folder, b.rover, key)
+        self.grid_title.setText(f"Flipbook · {b.name} · Loading…")
+        self.lister.request(("flipbook", self.list_key), folder, b.rover, b.sol, b.camera)
+        self.loading_timer.start()
+
+    def _apply_flipbook(self, list_key, source: list[PhotoFile]) -> None:
+        """A saved flipbook's camera folder arrived: its settings go into the bar, and it plays."""
+        self.list_key = None
+        self.loading_timer.stop()
+        b = self.flip_book
+        if b is None or list_key[2] != (self.FLIPBOOK, b.id):
+            return
+        self.flip_ctx, self.flip_source = (b.rover, b.sol, b.camera), source
+        bar = self.flip_bar
+        for w in (bar.speed, bar.loop_box, bar.same_box):
+            w.blockSignals(True)
+        bar.from_edit.setText(str(b.first))
+        bar.to_edit.setText(str(b.last))
+        bar.speed.setValue(int(round(b.fps)))
+        bar._show_speed(bar.speed.value())
+        bar.loop_box.setChecked(b.loop)
+        bar.same_box.setChecked(b.same_size)
+        for w in (bar.speed, bar.loop_box, bar.same_box):
+            w.blockSignals(False)
+        bar.set_book(b.name, dirty=False)
+        frames = self._frames()
+        title = f"Flipbook · {b.name} · {count_text(len(frames), 'photo')}"
+        self._show_photos(list_key[2], frames, title, show_camera=False,
+                          empty="None of this flipbook's photos are in this photo folder.")
+        if frames:
+            self.open_full()
+            self._play()
+
+    def _rename_flipbook(self, book_id: str) -> None:
+        b = self.favs.flipbook(book_id)
+        if b is None:
+            return
+        name = self.ask_text("Rename Flipbook", "Name:", b.name)
+        if name and name.strip():
+            b.name = name.strip()
+            self.favs.save_flipbook(b)
+            if self.flip_book is not None and self.flip_book.id == b.id:
+                self.flip_bar.set_book(b.name, self.flip_dirty)
+            self._refresh_special()
+
+    def _delete_flipbook(self, book_id: str) -> None:
+        b = self.favs.flipbook(book_id)
+        if b is None or not self.confirm("Delete Flipbook", f"Delete the flipbook “{b.name}”? Its photos are "
+                                                            f"kept."):
+            return
+        self.favs.delete_flipbook(book_id)
+        if self.flip_book is not None and self.flip_book.id == book_id:
+            self.flip_book, self.flip_dirty = None, False
+            self.flip_bar.set_book(None, dirty=False)
+        self._refresh_special()
+
+    # ---- showing photos ------------------------------------------------------------------------------------
+
+    def _show_photos(self, key, photos: list[PhotoFile], title: str, show_camera: bool, empty: str,
+                     caption_fn: Callable[[PhotoFile], str] | None = None) -> None:
         self.view_key = key
         self.grid_title.setText(title)
+        self.model.caption_fn = caption_fn
         self.model.set_photos(photos, show_camera)
         self.full_cache.clear()
         if photos:
             if self.stack.currentWidget() is not self.full_page:
                 self.stack.setCurrentWidget(self.grid)
-            self.grid.setCurrentIndex(self.model.index(0))
-            self.grid.scrollToTop()
+            row = self.model.rows.get(self.select_path, 0) if self.select_path else 0
+            self.select_path = None
+            self.grid.setCurrentIndex(self.model.index(row))
+            if row:
+                self.grid.scrollTo(self.model.index(row))
+            else:
+                self.grid.scrollToTop()
         else:
             self.empty.setText(empty)
             self.stack.setCurrentWidget(self.empty)
@@ -855,11 +1703,13 @@ class PhotosPage(QWidget):
             self._show_details(None)
 
     def _set_empty(self, text: str) -> None:
+        self._forget_listing()
+        self.tree.blockSignals(True)
         self.tree.clear()
         self.sol_items = {}
-        self.newest_item = None
-        if self.newest:
-            self._add_newest_item()
+        self._add_special_items()
+        self.tree.blockSignals(False)
+        self.view_key = None
         self.grid_title.setText("")
         self.model.set_photos([], True)
         self.empty.setText(text)
@@ -905,9 +1755,8 @@ class PhotosPage(QWidget):
             if d:
                 rows.append(("Earth Date", f"Around {fmt_date(d)}"))
         rows += extra
-        size = QImageReader(p.path).size()
-        if size.isValid():
-            rows.append(("Image Size", f"{size.width():,} × {size.height():,} pixels"))
+        # Read with the thumbnail or preview, on a background thread (opening the file here waited for the disk).
+        rows.append(("Image Size", self.image_sizes.get(p.path, "…")))
         try:
             rows.append(("File Size", fmt_file_size(os.path.getsize(p.path))))
         except OSError:
@@ -919,6 +1768,7 @@ class PhotosPage(QWidget):
         has = p is not None
         self.full_btn.setEnabled(has)
         self.folder_btn.setEnabled(has)
+        self._update_fav_controls()
         if not has:
             self.preview.setPixmap(QPixmap())
             self.preview.setText("")
@@ -936,7 +1786,28 @@ class PhotosPage(QWidget):
         if self.current is not None:
             self._set_detail_rows(self.details_for(self.current))
 
+    def _note_size(self, key, img: QImage) -> None:
+        """Keep a photo's own size, read with its thumbnail or preview; show it if it's the chosen photo."""
+        if not isinstance(key, tuple) or len(key) < 2 or not isinstance(key[1], str):
+            return
+        path = key[1]
+        if path in self.image_sizes:
+            return
+        w, _, h = img.text(FULL_SIZE).partition("x")
+        if not (w.isdigit() and h.isdigit()):
+            if not img.isNull() or key[0] != "preview":
+                return
+            text = "Unknown"                       # the preview couldn't read the file either
+        else:
+            text = f"{int(w):,} × {int(h):,} pixels"
+        if len(self.image_sizes) > 20_000:
+            self.image_sizes.clear()
+        self.image_sizes[path] = text
+        if self.current is not None and self.current.path == path:
+            self.refresh_details()
+
     def _big_ready(self, key, img: QImage) -> None:
+        self._note_size(key, img)
         kind, path = key
         if kind == "preview":
             if self.current is not None and self.current.path == path:
@@ -966,6 +1837,7 @@ class PhotosPage(QWidget):
         self.viewer.setFocus()
 
     def close_full(self) -> None:
+        self._pause_flipbook(select=True)
         if self.stack.currentWidget() is self.full_page:
             self.stack.setCurrentWidget(self.grid if self.model.photos else self.empty)
             row = self.model.rows.get(self.current.path) if self.current else None
@@ -974,6 +1846,7 @@ class PhotosPage(QWidget):
             self.grid.setFocus()
 
     def _load_full(self, p: PhotoFile) -> None:
+        self._sync_flip_ctx(p)                  # the flipbook bar's From and To: this photo's camera folder
         row = self.model.rows.get(p.path, 0)
         total = len(self.model.photos)
         self.position.setText(f"{row + 1:,} of {total:,}")
@@ -991,6 +1864,7 @@ class PhotosPage(QWidget):
             self.big_loader.request(("full", p.path), p.path, None)
 
     def step(self, delta: int) -> None:
+        self._pause_flipbook(select=True)       # stepping starts from the frame the flipbook showed
         if self.current is None:
             return
         row = self.model.rows.get(self.current.path)
@@ -1038,6 +1912,7 @@ class PhotosPage(QWidget):
         # The sol is counted again from the folder shortly (adding 1 here could count a photo twice, if the
         # background count read the folder after the file was saved).
         self.dirty_sols.add((folder, p.rover, p.sol))
+        self._forget_lists(folder, p.rover, p.sol)
         if not self.recount_timer.isActive():
             self.recount_timer.start()
         if folder == self.loaded_folder:
@@ -1100,7 +1975,11 @@ class PhotosPage(QWidget):
                 self.rover_box.setCurrentText(p.rover)
             item = self._find_item(("camera", p.sol, p.camera))
             if item is not None:
+                self.select_path = p.path
                 self.tree.setCurrentItem(item)
+                if self.list_key is not None:          # chosen when the camera's photo list arrives
+                    return
+                self.select_path = None
         row = self.model.rows.get(p.path)
         if row is not None:
             self.grid.setCurrentIndex(self.model.index(row))
@@ -1113,5 +1992,7 @@ class PhotosPage(QWidget):
 
     def shutdown(self) -> None:
         self.counter.stop()
+        self.player.close()
+        self.lister.close()
         self.loader.close()
         self.big_loader.close()

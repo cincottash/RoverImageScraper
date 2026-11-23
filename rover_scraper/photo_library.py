@@ -137,6 +137,24 @@ def photos_in(folder: str, rover: str, sol: int, camera: str | None = None) -> l
     return out
 
 
+def find_photos(folder: str, keys: list[tuple[str, int, str, int]]) -> tuple[list[PhotoFile], int]:
+    """The photos named by (rover, sol, camera, number), in that order, reading each camera folder once.
+    Returns (photos found, how many weren't in the folder)."""
+    by_folder: dict[tuple[str, int, str], dict[int, os.DirEntry]] = {}
+    found, missing = [], 0
+    for rover, sol, camera, number in keys:
+        k = (rover, sol, camera)
+        if k not in by_folder:
+            entries = _photo_entries(os.path.join(folder, rover, str(sol), camera))
+            by_folder[k] = {photo_number(e.name): e for e in entries}
+        e = by_folder[k].get(number)
+        if e is None:
+            missing += 1
+        else:
+            found.append(PhotoFile(e.path, rover, sol, camera, number))
+    return found, missing
+
+
 def photo_from_path(folder: str, path: str) -> PhotoFile | None:
     """The PhotoFile for a path inside the folder's <rover>/<sol>/<camera>/<n>.<ext> layout, or None."""
     try:
