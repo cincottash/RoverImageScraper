@@ -131,7 +131,7 @@ The **Photos** tab (or *Ctrl+2*) browses the photo folder without a file manager
   dragging moves the photo, and a double-click switches between *Fit* and *Actual Size*. *Previous* and *Next*
   (or the arrow keys) step through the camera's photos; *Esc* goes back.
 
-![A photo at full size, with Previous, Next, Fit, Actual Size and Favorite above it, and the flipbook bar below it: Play, From, To, Speed, Loop, Same Size Only and Save Flipbook](.github/readme/photo_full.png)
+![A photo at full size, with Previous, Next, Fit, Actual Size and Favorite above it, and the flipbook bar below it: Play, Speed, Loop, Skip Odd Sizes, Reverse and Save Flipbook](.github/readme/photo_full.png)
 
 **When and where each photo was taken** is looked up online the first time you open a sol, for all its photos at
 once, and kept in the app data folder, so it shows instantly after that (also offline). It shows the time taken
@@ -141,6 +141,11 @@ few Mars Vista requests per sol (an API key is needed); Spirit and Opportunity u
 
 *Download > Get Details for Downloaded Photos…* looks up every sol in the folder ahead of time. It can be stopped
 at any point; the next run carries on from there.
+
+When a photo has no details of its own, a button under the details offers what can be done: **Look Up Again**
+(the sol is looked up once more, which catches photos added since and look-ups that went wrong), **Try Again**
+after a look-up failed, or **Add API Key…** when the key is missing. Some files, such as old thumbnails, match no
+photo NASA still lists; those keep the details of their sol as a whole.
 
 <details>
 <summary><b>How photos are matched to their details</b></summary>
@@ -173,20 +178,25 @@ folder moves.
 
 ### Flipbooks
 
-Photos taken a moment apart play like a film: a landing, the arm moving, the sky changing. At full size:
+Photos taken a moment apart play like a film: a landing, the arm moving, the sky changing.
 
-1. Choose **From** and **To** (they start as the camera folder's first and last photo), or use *Set From Here* and
-   *Set To Here* on the photo shown.
-2. Click **Play** (or press **P**). **Speed** is 1–30 photos a second; **Loop** starts again after the last photo.
-   **Same Size Only** skips photos of another size than the first, as folders often mix full frames with
-   thumbnails. Photos play in the order they were taken when that's known, otherwise in their numbers' order.
-3. **Save Flipbook…** keeps it, with its name, photos, speed and options, in the *Flipbooks* tab. Choosing it
-   plays it again; change the speed or anything else, then *Save Changes* (or *Save as New…*). Right-click a
-   saved flipbook to rename or delete it.
+1. **Choose what to play:** select several photos in the grid (*Shift*+click a run), or just one photo to play its
+   whole camera folder. Open them at full size.
+2. Click **Play** (or press **P**). A selection plays from its first photo, a camera folder from the photo shown.
+   **Speed** is 1–30 photos a second; **Loop** starts again after the last photo; **Reverse** plays backwards.
+   **Skip Odd Sizes** skips photos that aren't the size of the first one: NASA's folders often mix small
+   thumbnails and cut-out parts in with the full photos, which makes the film jump. Photos play in the order they
+   were taken when that's known, otherwise in their numbers' order.
+3. **Save Flipbook…** keeps exactly those photos, in that order, with the speed and options, in the *Flipbooks*
+   tab. You can also right-click selected photos and pick *Add to Flipbook > New Flipbook…*, or a saved flipbook
+   to add them to its end.
 
-**A flipbook of chosen photos:** choose photos in the grid (from any sols and cameras), right-click and pick *Add
-to Flipbook > New Flipbook…*, or a saved flipbook to add them to it. It plays exactly those photos; its speed and
-options can be changed and saved like any other.
+**Editing a saved flipbook:** choose it in the *Flipbooks* tab (it plays), then click **Edit Frames** to see its
+frames as thumbnails, in order. **Delete** takes frames out (the photos themselves are never deleted), **Ctrl+C**
+and **Ctrl+V** copy frames (or photos from any sol) and paste them after the chosen frame, and right-clicking a
+frame offers *Duplicate*, *Move Earlier*, *Move Later*, *Reverse All Frames* and *Play From Here*. Changes to a saved
+flipbook, its speed and options included, are saved as you make them; *Save as New…* keeps a copy. Right-click a
+flipbook in the list to rename or delete it.
 
 Frames are read a little ahead of the one shown; on a slow disk the flipbook pauses rather than skipping photos.
 

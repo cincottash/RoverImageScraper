@@ -919,6 +919,10 @@ class MainWindow(QMainWindow):
         self.lookups.finished.connect(self._lookup_finished)
         self.photos_page.extra_details = self._photo_extra_details
         self.photos_page.photo_time = self._photo_time
+        self.photos_page.details_action = self._photo_details_action
+        self.play_btn.clicked.connect(self.photos_page.play_or_pause)
+        self.photos_page.play_state_changed.connect(self._update_play_button)
+        self.looked_up_again: set = set()               # sols looked up again from the details panel
         self._build_menus()
         self._load_settings_into_widgets()
         self._refresh_library()
@@ -1053,6 +1057,12 @@ class MainWindow(QMainWindow):
         self.start_btn.setMinimumWidth(130)
         self.start_btn.clicked.connect(self._start_download)
         bl.addWidget(self.start_btn)
+        # On the Photos page the main button plays the flipbook (Start and Preview belong to the Download page)
+        self.play_btn = QPushButton("▶  Play")
+        self.play_btn.setObjectName("primary")
+        self.play_btn.setMinimumWidth(130)
+        self.play_btn.setVisible(False)
+        bl.addWidget(self.play_btn)
         outer.addWidget(bottom)
 
     def _build_folder_card(self) -> None:
@@ -1582,6 +1592,39 @@ class MainWindow(QMainWindow):
             w.setEnabled(idle)
         if hasattr(self, "act_choose"):
             self.act_choose.setEnabled(idle)
+        if hasattr(self, "play_btn"):
+            self._update_bottom_bar()
+
+    TASK_NAMES = {"download": "Download", "scan": "Scan", "full": "Full Check", "preview": "Preview",
+                  "details": "Details Lookup"}
+
+    def _update_bottom_bar(self) -> None:
+        """The bottom bar follows the page: the Download page's Preview, Start, Pause and Stop, or on the Photos
+        page the flipbook's Play, with Pause and Stop only while a task runs (named for it, so they can't be
+        taken for the flipbook's)."""
+        on_photos = self.pages.currentWidget() is self.photos_page
+        idle = self.mode == "idle"
+        for w in (self.preview_btn, self.start_btn):
+            w.setVisible(not on_photos)
+        self.start_hint.setVisible(not on_photos and bool(self.start_hint.text()))
+        self.play_btn.setVisible(on_photos)
+        self.pause_btn.setVisible(not on_photos or self.mode == "download")
+        self.stop_btn.setVisible(not on_photos or not idle)
+        task = self.TASK_NAMES.get(self.mode, "")
+        self.pause_btn.setText("Pause Download" if on_photos else "Pause")
+        self.stop_btn.setText(f"Stop {task}" if on_photos and task else "Stop")
+        if on_photos:
+            self._update_play_button()
+
+    def _update_play_button(self) -> None:
+        pp = self.photos_page
+        playing = pp.player.playing
+        self.play_btn.setText("❚❚  Pause" if playing else "▶  Play")
+        self.play_btn.setEnabled(playing or pp.current is not None)
+        self.play_btn.setToolTip("Pause the flipbook (P)" if playing else
+                                 "Play as a flipbook (P): the photos you selected, the flipbook shown, or this "
+                                 "photo's whole camera folder" if pp.current is not None else
+                                 "Choose a photo, or select several, to play them as a flipbook")
 
     def _set_mode(self, mode: str) -> None:
         self.mode = mode
@@ -1875,6 +1918,7 @@ class MainWindow(QMainWindow):
         for n, act in self.page_actions.items():
             act.setChecked(n == name)
         self._update_page_status()
+        self._update_bottom_bar()
         if name == "Photos":
             self.lookups.failed.clear()          # look-ups that failed are tried again
             self.photos_page.setFocus()
@@ -1919,6 +1963,9 @@ class MainWindow(QMainWindow):
         summary = self.details.sol_state(folder, p.rover, p.sol)
         if summary is not None:
             rows = [] if link else describe_sol(summary)
+            if rows and (folder_key(folder), p.rover, p.sol) in self.looked_up_again:
+                rows.append(("Looked Up Again", "This file still matches no single NASA photo. NASA may no longer "
+                                                "list this copy (for example an old thumbnail)."))
             return rows or [("More Details", "None found for this photo.")]
         key = (folder_key(folder), p.rover, p.sol)
         if self.lookups.pending(folder, p.rover, p.sol):
@@ -1932,6 +1979,39 @@ class MainWindow(QMainWindow):
                                      "opened again.")]
         self.lookups.request(folder, p.rover, p.sol)
         return [("More Details", "Looking up…")]
+
+    def _photo_details_action(self, p):
+        """The details panel's button for a photo without details of its own: (text, tooltip, what it does)."""
+        folder = self.photos_page.loaded_folder or self._folder()
+        if not folder:
+            return None
+        info, link = self.details.file_photo(folder, p.rover, p.sol, p.camera, p.number)
+        if info is not None or self.lookups.pending(folder, p.rover, p.sol):
+            return None
+        key = (folder_key(folder), p.rover, p.sol)
+        error = self.lookups.failed.get(key)
+        if error == "no key" and not self.lookup_key:
+            return ("Add API Key…", "Looking up Curiosity and Perseverance needs a Mars Vista API key, pasted on the "
+                                    "Download page", self._ask_for_key)
+        summary = self.details.sol_state(folder, p.rover, p.sol)
+        if error:
+            return ("Try Again", f"Look up sol {p.sol:,}'s details again (the last try failed: {error})",
+                    lambda: self._look_up_again(folder, p.rover, p.sol))
+        if summary is not None and not link:
+            return ("Look Up Again", f"Look up sol {p.sol:,} again and match its files to NASA's photos once more "
+                                     f"(catches photos added since, and look-ups that went wrong). Uses a few Mars "
+                                     f"Vista requests for Curiosity and Perseverance",
+                    lambda: self._look_up_again(folder, p.rover, p.sol))
+        return None
+
+    def _look_up_again(self, folder: str, rover: str, sol: int) -> None:
+        self.details.forget_sol(folder, rover, sol)
+        self.looked_up_again.add((folder_key(folder), rover, sol))
+        self.lookups.request(folder, rover, sol)
+
+    def _ask_for_key(self) -> None:
+        self._show_page("Download")
+        self.key_edit.setFocus()
 
     def _photo_time(self, p) -> str | None:
         """When a photo was taken (ISO, UTC), if its details were looked up: flipbooks play in that order."""
@@ -2094,8 +2174,9 @@ class MainWindow(QMainWindow):
     def _sync_button_actions(self) -> None:
         """Download menu items follow their buttons (enabled state, and Start/Resume wording)."""
         self.act_details.setEnabled(self.mode == "idle" and bool(self._folder()))
+        bar = (self.preview_btn, self.start_btn, self.pause_btn, self.stop_btn)   # hidden on the Photos page only
         for act, button in self.button_actions:
-            act.setEnabled(button.isEnabled() and button.isVisible())
+            act.setEnabled(button.isEnabled() and (button.isVisible() or button in bar))
             act.setText(button.text().replace("▶", "").strip())
 
     def _choice_menu(self, parent, title: str, options: list, attr: str, after=None) -> QMenu:
