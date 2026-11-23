@@ -38,6 +38,7 @@ class Settings:
     verbose_log: bool = False            # View > Detailed Activity Log
     window_opacity: int = 100            # percent (View > Window Opacity)
     photo_thumb_size: int = 128          # Photos page: thumbnail size in pixels
+    photo_sol_sort: str = "sol:asc"      # Photos page: the sol list's order ("sol" or "photos", "asc" or "desc")
 
     @classmethod
     def load(cls, path: str) -> "Settings":

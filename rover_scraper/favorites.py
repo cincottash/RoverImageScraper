@@ -58,6 +58,9 @@ class Flipbook:
     fps: float = 8.0
     loop: bool = True
     same_size: bool = True              # skip photos of another size than the first (thumbnails, sub-frames)
+    # Chosen photos ([rover, sol, camera, number] each) instead of first-last in one camera folder: a flipbook
+    # made from selected photos. rover/sol/camera above are then the first photo's (for showing where it's from).
+    photos: list | None = None
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     created: float = 0.0
     changed: float = 0.0
@@ -136,6 +139,27 @@ class FavoritesStore:
             self._index[key] = fav
             self.save()
         return fav
+
+    def add_many(self, keys: list[FavKey]) -> int:
+        """Adds those not in Favorites yet (one save). Returns how many were added."""
+        added = 0
+        for key in keys:
+            key = fav_key(*key)
+            if key not in self._index:
+                fav = Favorite(*key, added=time.time())
+                self.favorites.append(fav)
+                self._index[key] = fav
+                added += 1
+        if added:
+            self.save()
+        return added
+
+    def remove_many(self, keys: list[FavKey]) -> None:
+        gone = {fav_key(*k) for k in keys}
+        if gone & set(self._index):
+            self.favorites = [f for f in self.favorites if f.key not in gone]
+            self._reindex()
+            self.save()
 
     def remove(self, key: FavKey) -> None:
         if key in self._index:

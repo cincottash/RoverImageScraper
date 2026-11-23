@@ -275,6 +275,16 @@ class FlipbookBar(QWidget):
     def set_playing(self, playing: bool) -> None:
         self.play_btn.setText("❚❚  Pause" if playing else "▶  Play")
 
+    def set_range_enabled(self, enabled: bool) -> None:
+        """From and To apply to a camera folder's range; a flipbook of chosen photos has none."""
+        for w in (self.from_edit, self.to_edit, self.from_here, self.to_here):
+            w.setEnabled(enabled)
+        chosen = "This flipbook plays the photos chosen for it"
+        self.from_edit.setToolTip("The first photo number" if enabled else chosen)
+        self.to_edit.setToolTip("The last photo number" if enabled else chosen)
+        self.from_edit.setPlaceholderText("" if enabled else "—")
+        self.to_edit.setPlaceholderText("" if enabled else "—")
+
     def set_book(self, name: str | None, dirty: bool) -> None:
         """name: the saved flipbook being shown (None: a new one). dirty: changed since it was saved."""
         saved = name is not None

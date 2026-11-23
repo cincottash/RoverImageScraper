@@ -2177,7 +2177,7 @@ class MainWindow(QMainWindow):
 
     # View menu choices, and the download options in the left column (File > Settings > Reset Settings to Defaults).
     VIEW_FIELDS = ("data_unit", "speed_unit", "speed_window", "theme", "show_log", "collapsed_cards",
-                   "window_opacity", "photo_thumb_size")
+                   "window_opacity", "photo_thumb_size", "photo_sol_sort")
     OPTION_FIELDS = ("rovers", "excluded_cameras", "check_existing", "sol_from", "sol_to", "workers", "limit_on",
                      "limit_files", "limit_period")
 
@@ -2196,6 +2196,7 @@ class MainWindow(QMainWindow):
         self._apply_folded_cards()
         self.opacity_slider.setValue(self.settings.window_opacity)     # also updates the value beside it
         self.photos_page.size_slider.setValue(self.settings.photo_thumb_size)
+        self.photos_page.apply_sol_sort()
         self._apply_opacity()
         self._apply_theme()
         self._update_counters()

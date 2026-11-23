@@ -119,9 +119,12 @@ The **Photos** tab (or *Ctrl+2*) browses the photo folder without a file manager
 
 - **Browse:** choose a rover, then a sol (with its number of photos), then a camera, or type a sol into *Go To
   Sol* (it opens that sol, or the nearest one). While a download runs, *Newest Downloads* lists the photos as they
-  arrive. The *Favorites* and *Flipbooks* tabs above the list have their own lists (below).
-- **Thumbnails:** *Thumbnail Size* makes them bigger or smaller. Arrow keys move between photos. Right-click a photo
-  for *Add to Favorites*, *View Full Size* and *Show in Folder*.
+  arrive. Click *Sol* or *Photos* above the list to sort by it; click again to reverse. The *Favorites* and
+  *Flipbooks* tabs above the list have their own lists (below).
+- **Thumbnails:** *Thumbnail Size* makes them bigger or smaller. Arrow keys move between photos.
+- **Choosing several photos**, as in File Explorer: *Ctrl*+click adds or removes one, *Shift*+click chooses a run,
+  dragging draws a rectangle around photos, *Ctrl+A* chooses all. Right-click a photo (or the chosen photos) to add
+  them to Favorites or to a flipbook, *View Full Size* or *Show in Folder*.
 - **Details:** the chosen photo's preview, rover, sol, camera, size and file, and the details looked up online
   (below). *Show in Folder* opens it in your file manager.
 - **Full size:** *View Full Size*, a click on the preview, or a double-click on a thumbnail. The mouse wheel zooms,
@@ -155,8 +158,8 @@ at any point; the next run carries on from there.
 
 ![The Favorites tab: All Favorite Photos and two favorite folders in the list, and five starred photos with their notes as captions](.github/readme/favorites.png)
 
-- **A photo:** *Add to Favorites* in the details or when you right-click it, *Favorite* at full size, or the **F**
-  key. Favorites get a star on their thumbnail and a *Note* box in the details; the note becomes the thumbnail's
+- **A photo, or several:** *Add to Favorites* in the details or when you right-click, *Favorite* at full size, or
+  the **F** key. With several photos chosen, these add all of them (or take them all out). Favorites get a star on their thumbnail and a *Note* box in the details; the note becomes the thumbnail's
   caption in *All Favorite Photos*.
 - **A sol or camera folder:** right-click it in the *Sols* list. Favorite folders are listed in the *Favorites* tab;
   choosing one goes there. Right-click one to edit its note or remove it.
@@ -180,6 +183,10 @@ Photos taken a moment apart play like a film: a landing, the arm moving, the sky
 3. **Save Flipbook…** keeps it, with its name, photos, speed and options, in the *Flipbooks* tab. Choosing it
    plays it again; change the speed or anything else, then *Save Changes* (or *Save as New…*). Right-click a
    saved flipbook to rename or delete it.
+
+**A flipbook of chosen photos:** choose photos in the grid (from any sols and cameras), right-click and pick *Add
+to Flipbook > New Flipbook…*, or a saved flipbook to add them to it. It plays exactly those photos; its speed and
+options can be changed and saved like any other.
 
 Frames are read a little ahead of the one shown; on a slow disk the flipbook pauses rather than skipping photos.
 
