@@ -64,8 +64,7 @@ LATEST_THUMB = 96           # pixels: the Latest Photo thumbnail in the Progress
 # Where keyring keeps the API key on this system, for the window's wording.
 KEY_STORE = ("Windows Credential Manager" if os.name == "nt" else
              "the macOS Keychain" if sys.platform == "darwin" else "your system's keyring")
-ALL_ROVERS = SUPPORTED_ROVERS
-MAIN_ROVERS = ("Curiosity", "Perseverance")          # always shown in Library status
+ALL_ROVERS = SUPPORTED_ROVERS                        # Library status always shows every rover, ticked or not
 
 
 # ---- formatting ------------------------------------------------------------------------------------------
@@ -1098,7 +1097,6 @@ class MainWindow(QMainWindow):
                 box.setToolTip("Photos come from NASA's Planetary Data System archive (no Mars Vista requests).")
             box.toggled.connect(lambda _=False, n=name: self._rover_toggled(n))
             box.toggled.connect(self._validate)
-            box.toggled.connect(lambda _=False: self._update_library_columns())
             row.addWidget(box)
             status = label("N/A", "muted")
             status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -1478,7 +1476,6 @@ class MainWindow(QMainWindow):
                                                                      else "hour"))
         self._loading = False
         self._update_camera_toggles()
-        self._update_library_columns()
         self._set_log_visible(s.show_log)
         self._apply_folded_cards()
         if self.checkpoint:
@@ -2322,16 +2319,6 @@ class MainWindow(QMainWindow):
         self._validate()
         self._refresh_library()
         return True
-
-    def _update_library_columns(self) -> None:
-        """Library status shows a column for each ticked rover (Curiosity and Perseverance always)."""
-        if not hasattr(self, "lib_heads"):
-            return
-        for rover in ALL_ROVERS:
-            show = rover in MAIN_ROVERS or self.rover_boxes[rover].isChecked()
-            self.lib_heads[rover].setVisible(show)
-            for row in self.lib_rows:
-                self.lib_cells[(row, rover)].setVisible(show)
 
     def _camera_filter(self) -> dict[str, set[str]] | None:
         out = {}
