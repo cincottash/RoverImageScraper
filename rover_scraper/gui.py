@@ -472,6 +472,10 @@ def apply_theme(app: QApplication, t: dict, only=None) -> None:
                               padding: 5px 16px; color: {t['muted']}; font-weight: 600; }}
         QPushButton#pageTab:hover {{ color: {t['text']}; background: {t['track']}; }}
         QPushButton#pageTab:checked {{ background: {t['accent']}; color: {t['accent_text']}; }}
+        QPushButton#browseTab {{ background: transparent; border: 1px solid transparent; border-radius: 6px;
+                                padding: 4px 4px; color: {t['muted']}; font-weight: 600; min-width: 0; }}
+        QPushButton#browseTab:hover {{ color: {t['text']}; background: {t['track']}; }}
+        QPushButton#browseTab:checked {{ background: {t['accent']}; color: {t['accent_text']}; }}
         QTreeWidget#solTree, QListView#photoGrid {{ background: {t['input']}; border: 1px solid {t['border']};
                                                     border-radius: 6px; }}
         QTreeWidget#solTree::item {{ padding: 2px 0; }}
