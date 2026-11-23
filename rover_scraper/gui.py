@@ -476,6 +476,7 @@ def apply_theme(app: QApplication, t: dict, only=None) -> None:
         QTreeWidget#solTree::item {{ padding: 2px 0; }}
         QTreeWidget#solTree::item:hover {{ background: {t['track']}; }}
         QTreeWidget#solTree::item:selected {{ background: {t['accent']}; color: {t['accent_text']}; }}
+        QComboBox {{ combobox-popup: 0; }}
         QHeaderView::section {{ background: {t['card']}; color: {t['muted']}; border: none;
                                border-bottom: 1px solid {t['border']}; padding: 4px 6px; }}
         QFrame#card QLabel#photoPreview, QFrame#card QLabel#latestThumb {{ background: {t['input']};
