@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+import weakref
 from typing import Callable
 
 from PySide6.QtCore import (QAbstractListModel, QEvent, QModelIndex, QObject, QPointF, QRect, QRectF, QSize, Qt,
@@ -55,16 +56,30 @@ def show_in_folder(path: str) -> None:
 
 # ---- loading images in the background --------------------------------------------------------------------
 
+FULL_SIZE = "full-size"           # image text: the photo's own size, "<width>x<height>", before any shrinking
+
+
 def read_image(path: str, size: int | None) -> QImage:
-    """The image at path, shrunk while reading so its longer side is at most size (None: full size)."""
+    """The image at path, shrunk while reading so its longer side is at most size (None: full size). Its own size
+    is kept in the image's FULL_SIZE text."""
     reader = QImageReader(path)
     reader.setAutoTransform(True)
-    if size:
-        s = reader.size()
-        if s.isValid() and (s.width() > size or s.height() > size):
-            reader.setScaledSize(s.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio))
+    s = reader.size()
+    if size and s.isValid() and (s.width() > size or s.height() > size):
+        reader.setScaledSize(s.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio))
     img = reader.read()
+    if not img.isNull() and s.isValid():
+        img.setText(FULL_SIZE, f"{s.width()}x{s.height()}")
     return img
+
+
+# Readers for what's on screen (the photo list, thumbnails, previews). The background photo counter waits while
+# any of them has work: on a hard disk, two readers at once make both slow.
+_SCREEN_READERS: weakref.WeakSet = weakref.WeakSet()
+
+
+def screen_reads_pending() -> bool:
+    return any(r.busy() for r in list(_SCREEN_READERS))
 
 
 class ImageLoader(QObject):
@@ -73,16 +88,25 @@ class ImageLoader(QObject):
 
     ready = Signal(object, QImage)
 
-    def __init__(self, threads: int = 3, max_waiting: int = 600, parent=None):
+    def __init__(self, threads: int = 3, max_waiting: int = 600, parent=None,
+                 hold: Callable[[], bool] | None = None):
+        """hold(): while it's true, no new read starts (something more urgent is reading the disk)."""
         super().__init__(parent)
         self._lock = threading.Condition()
         self._waiting: collections.OrderedDict = collections.OrderedDict()   # key -> (path, size)
         self._max_waiting = max_waiting
+        self._hold = hold
+        self._active = 0
         self._closed = False
         self._threads = [threading.Thread(target=self._run, daemon=True, name=f"image-loader-{i}")
                          for i in range(threads)]
         for t in self._threads:
             t.start()
+        _SCREEN_READERS.add(self)
+
+    def busy(self) -> bool:
+        with self._lock:
+            return not self._closed and (bool(self._waiting) or self._active > 0)
 
     def request(self, key, path: str, size: int | None) -> None:
         with self._lock:
@@ -105,19 +129,72 @@ class ImageLoader(QObject):
     def _run(self) -> None:
         while True:
             with self._lock:
-                while not self._waiting and not self._closed:
-                    self._lock.wait()
+                while not self._closed and (not self._waiting or (self._hold is not None and self._hold())):
+                    self._lock.wait(0.03 if self._waiting else None)
                 if self._closed:
                     return
                 key, (path, size) = self._waiting.popitem(last=True)
+                self._active += 1
             try:
                 img = read_image(path, size)
             except Exception:  # noqa: BLE001 - an unreadable file shows as blank
                 img = QImage()
             with self._lock:
+                self._active -= 1
                 if self._closed:
                     return
             self.ready.emit(key, img)
+
+
+class PhotoLister(QObject):
+    """Lists the photos of a sol or a camera folder on a background thread, so a slow disk never freezes the
+    window. Only the newest request matters: older ones still waiting are dropped. listed(key, photos) arrives on
+    the GUI thread."""
+
+    listed = Signal(object, object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cond = threading.Condition()
+        self._job = None
+        self._active = False
+        self._closed = False
+        threading.Thread(target=self._run, daemon=True, name="photo-lister").start()
+        _SCREEN_READERS.add(self)
+
+    def request(self, key, folder: str, rover: str, sol: int, camera: str | None) -> None:
+        with self._cond:
+            self._job = (key, folder, rover, sol, camera)
+            self._cond.notify()
+
+    def busy(self) -> bool:
+        with self._cond:
+            return not self._closed and (self._job is not None or self._active)
+
+    def close(self) -> None:
+        with self._cond:
+            self._closed = True
+            self._job = None
+            self._cond.notify_all()
+
+    def _run(self) -> None:
+        while True:
+            with self._cond:
+                while self._job is None and not self._closed:
+                    self._cond.wait()
+                if self._closed:
+                    return
+                (key, folder, rover, sol, camera), self._job = self._job, None
+                self._active = True
+            try:
+                photos = photos_in(folder, rover, sol, camera)
+            except Exception:  # noqa: BLE001 - a folder that can't be read shows as empty
+                photos = []
+            with self._cond:
+                self._active = False
+                if self._closed:
+                    return
+            self.listed.emit(key, photos)
 
 
 class CountWorker(QObject):
@@ -136,6 +213,8 @@ class CountWorker(QObject):
         def work():
             batch, last = {}, time.monotonic()
             for sol in sols:
+                while screen_reads_pending() and gen == self._generation:
+                    time.sleep(0.03)                # what's on screen reads the disk first
                 if gen != self._generation:
                     return
                 batch[sol] = sol_photo_count(folder, rover, sol)
@@ -450,11 +529,23 @@ class PhotosPage(QWidget):
     def __init__(self, settings, folder: Callable[[], str], save_settings: Callable[[], None], parent=None):
         super().__init__(parent)
         self.settings, self.folder, self.save_settings = settings, folder, save_settings
-        self.loader = ImageLoader(threads=3)
+        # Thumbnails wait while a photo list is read: the list decides what's shown, so it gets the disk first.
+        self.loader = ImageLoader(threads=3, hold=lambda: getattr(self, "lister", None) is not None
+                                  and self.lister.busy())
         self.big_loader = ImageLoader(threads=1, max_waiting=8)       # previews and full-size images
         self.big_loader.ready.connect(self._big_ready)
+        self.loader.ready.connect(self._note_size)
         self.counter = CountWorker(self)
         self.counter.counted.connect(self._counted)
+        self.lister = PhotoLister(self)
+        self.lister.listed.connect(self._listed)
+        self.list_key = None                                          # (folder, rover, tree key) being listed
+        self.select_path: str | None = None                           # a photo to choose once its list arrives
+        self.goto_note: str | None = None                             # Go To Sol's "nearest sol" note
+        self.expand_sol: int | None = None                            # a sol to open once its list arrives
+        self.image_sizes: dict[str, str] = {}                         # path -> "1,200 × 900 pixels"
+        self.loading_timer = QTimer(self, singleShot=True, interval=250)
+        self.loading_timer.timeout.connect(self._show_loading)
         self.counts: dict[tuple[str, str, int], int] = {}             # (folder, rover, sol) -> photos
         self.sol_items: dict[int, QTreeWidgetItem] = {}
         self.newest: collections.deque[PhotoFile] = collections.deque(maxlen=NEWEST_MAX)
@@ -666,6 +757,9 @@ class PhotosPage(QWidget):
         return self.rover_box.currentText()
 
     def _rover_chosen(self) -> None:
+        self._forget_listing()
+        self.expand_sol = None
+        self.goto_note = None
         self.current = None
         self.view_key = None
         self._reload_sols(keep_view=False)
@@ -772,6 +866,9 @@ class PhotosPage(QWidget):
 
     def _update_browse_note(self) -> None:
         folder, rover = self.loaded_folder or "", self._rover()
+        if self.goto_note and rover:
+            self.browse_note.setText(self.goto_note)
+            return
         if not rover:
             self.browse_note.setText("")
             return
@@ -790,6 +887,14 @@ class PhotosPage(QWidget):
             return
         folder, rover, sol = self.loaded_folder or "", self._rover(), key[1]
         cams = cameras_in(folder, rover, sol)
+        self._add_cameras(item, cams)
+        total = sum(n for _, n in cams)
+        self.counts[(folder, rover, sol)] = total
+        item.setText(1, f"{total:,}")
+
+    def _add_cameras(self, item: QTreeWidgetItem, cams: list[tuple[str, int]]) -> None:
+        """The sol's camera rows: (camera, photos) for each camera folder that has photos."""
+        sol = item.data(0, Qt.ItemDataRole.UserRole)[1]
         for cam, n in cams:
             child = QTreeWidgetItem([cam, f"{n:,}"])
             child.setData(0, Qt.ItemDataRole.UserRole, ("camera", sol, cam))
@@ -798,9 +903,6 @@ class PhotosPage(QWidget):
             item.addChild(child)
         if not cams:
             item.setChildIndicatorPolicy(QTreeWidgetItem.ChildIndicatorPolicy.DontShowIndicator)
-        total = sum(n for _, n in cams)
-        self.counts[(folder, rover, sol)] = total
-        item.setText(1, f"{total:,}")
 
     def _go_to_sol(self) -> None:
         text = self.goto.text().strip()
@@ -810,10 +912,19 @@ class PhotosPage(QWidget):
         sols = sorted(self.sol_items)
         best = min(sols, key=lambda s: (abs(s - want), s))       # the sol itself, or the nearest one
         item = self.sol_items[best]
+        self.expand_sol = None
+        if item.childCount():
+            item.setExpanded(True)
+        else:
+            self.expand_sol = best                                 # its cameras come with its photo list
         self.tree.setCurrentItem(item)
+        if self.expand_sol == best and self.list_key is None:    # shown already, so no list is coming
+            self.expand_sol = None
+            item.setExpanded(True)
         self.tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtTop)
-        self.browse_note.setText(self.browse_note.text() if best == want else
-                                 f"No photos for sol {want}; showing sol {best}, the nearest one.")
+        # Kept until something else is chosen (counts arriving used to replace it at once).
+        self.goto_note = None if best == want else f"No photos for sol {want}; showing sol {best}, the nearest one."
+        self._update_browse_note()
 
     # ---- what the grid shows -----------------------------------------------------------------------------
 
@@ -822,20 +933,61 @@ class PhotosPage(QWidget):
             return
         key = item.data(0, Qt.ItemDataRole.UserRole)
         folder, rover = self.loaded_folder or "", self._rover()
+        self._forget_listing()
+        if self.goto_note:                             # Go To Sol sets its note again after choosing
+            self.goto_note = None
+            self._update_browse_note()
         if key[0] == self.NEWEST:
             photos = list(self.newest)
             title = f"Newest Downloads · {count_text(len(photos), 'photo')}"
             self._show_photos(key, photos, title, show_camera=True, empty="No photos downloaded yet.")
             return
+        # Listed on a background thread: on a hard disk, reading a sol's folders the first time takes a moment.
+        # What was shown stays until the list arrives ("Loading photos…" if that takes a while).
+        self.list_key = (folder, rover, key)
+        self.loader.clear()                            # thumbnails still waiting for the old view
+        self.grid_title.setText(f"{self._view_title(rover, key)} · Loading…")
+        self.lister.request(self.list_key, folder, rover, key[1], key[2] if key[0] == "camera" else None)
+        self.loading_timer.start()
+
+    def _forget_listing(self) -> None:
+        """A photo list still on its way is no longer wanted."""
+        self.list_key = None
+        self.loading_timer.stop()
+
+    @staticmethod
+    def _view_title(rover: str, key) -> str:
+        return f"{rover} · Sol {key[1]} · {camera_name(key[2]) if key[0] == 'camera' else 'All Cameras'}"
+
+    def _show_loading(self) -> None:
+        if self.list_key is not None:
+            self.model.set_photos([], True)
+            self.empty.setText("Loading photos…")
+            if self.stack.currentWidget() is not self.full_page:
+                self.stack.setCurrentWidget(self.empty)
+
+    def _listed(self, list_key, photos: list[PhotoFile]) -> None:
+        if list_key != self.list_key:                  # an older choice, or another folder or rover
+            return
+        self.list_key = None
+        self.loading_timer.stop()
+        folder, rover, key = list_key
         sol = key[1]
+        item = self.sol_items.get(sol)
+        if key[0] == "sol" and item is not None:      # the sol's cameras and count, from the same list
+            cams = collections.Counter(p.camera for p in photos)
+            if not item.childCount():
+                self._add_cameras(item, sorted(cams.items()))
+            self.counts[(folder, rover, sol)] = len(photos)
+            item.setText(1, f"{len(photos):,}")
+            self._update_browse_note()
+        if self.expand_sol == sol and item is not None:
+            self.expand_sol = None
+            item.setExpanded(True)
+        title = f"{self._view_title(rover, key)} · {count_text(len(photos), 'photo')}"
         if key[0] == "sol":
-            photos = photos_in(folder, rover, sol)
-            title = f"{rover} · Sol {sol} · All Cameras · {count_text(len(photos), 'photo')}"
             self._show_photos(key, photos, title, show_camera=True, empty="No photos in this sol's folder.")
         else:
-            cam = key[2]
-            photos = photos_in(folder, rover, sol, cam)
-            title = f"{rover} · Sol {sol} · {camera_name(cam)} · {count_text(len(photos), 'photo')}"
             self._show_photos(key, photos, title, show_camera=False, empty="No photos in this camera's folder.")
 
     def _show_photos(self, key, photos: list[PhotoFile], title: str, show_camera: bool, empty: str) -> None:
@@ -846,8 +998,13 @@ class PhotosPage(QWidget):
         if photos:
             if self.stack.currentWidget() is not self.full_page:
                 self.stack.setCurrentWidget(self.grid)
-            self.grid.setCurrentIndex(self.model.index(0))
-            self.grid.scrollToTop()
+            row = self.model.rows.get(self.select_path, 0) if self.select_path else 0
+            self.select_path = None
+            self.grid.setCurrentIndex(self.model.index(row))
+            if row:
+                self.grid.scrollTo(self.model.index(row))
+            else:
+                self.grid.scrollToTop()
         else:
             self.empty.setText(empty)
             self.stack.setCurrentWidget(self.empty)
@@ -855,6 +1012,7 @@ class PhotosPage(QWidget):
             self._show_details(None)
 
     def _set_empty(self, text: str) -> None:
+        self._forget_listing()
         self.tree.clear()
         self.sol_items = {}
         self.newest_item = None
@@ -905,9 +1063,8 @@ class PhotosPage(QWidget):
             if d:
                 rows.append(("Earth Date", f"Around {fmt_date(d)}"))
         rows += extra
-        size = QImageReader(p.path).size()
-        if size.isValid():
-            rows.append(("Image Size", f"{size.width():,} × {size.height():,} pixels"))
+        # Read with the thumbnail or preview, on a background thread (opening the file here waited for the disk).
+        rows.append(("Image Size", self.image_sizes.get(p.path, "…")))
         try:
             rows.append(("File Size", fmt_file_size(os.path.getsize(p.path))))
         except OSError:
@@ -936,7 +1093,28 @@ class PhotosPage(QWidget):
         if self.current is not None:
             self._set_detail_rows(self.details_for(self.current))
 
+    def _note_size(self, key, img: QImage) -> None:
+        """Keep a photo's own size, read with its thumbnail or preview; show it if it's the chosen photo."""
+        if not isinstance(key, tuple) or len(key) < 2 or not isinstance(key[1], str):
+            return
+        path = key[1]
+        if path in self.image_sizes:
+            return
+        w, _, h = img.text(FULL_SIZE).partition("x")
+        if not (w.isdigit() and h.isdigit()):
+            if not img.isNull() or key[0] != "preview":
+                return
+            text = "Unknown"                       # the preview couldn't read the file either
+        else:
+            text = f"{int(w):,} × {int(h):,} pixels"
+        if len(self.image_sizes) > 20_000:
+            self.image_sizes.clear()
+        self.image_sizes[path] = text
+        if self.current is not None and self.current.path == path:
+            self.refresh_details()
+
     def _big_ready(self, key, img: QImage) -> None:
+        self._note_size(key, img)
         kind, path = key
         if kind == "preview":
             if self.current is not None and self.current.path == path:
@@ -1100,7 +1278,11 @@ class PhotosPage(QWidget):
                 self.rover_box.setCurrentText(p.rover)
             item = self._find_item(("camera", p.sol, p.camera))
             if item is not None:
+                self.select_path = p.path
                 self.tree.setCurrentItem(item)
+                if self.list_key is not None:          # chosen when the camera's photo list arrives
+                    return
+                self.select_path = None
         row = self.model.rows.get(p.path)
         if row is not None:
             self.grid.setCurrentIndex(self.model.index(row))
@@ -1113,5 +1295,6 @@ class PhotosPage(QWidget):
 
     def shutdown(self) -> None:
         self.counter.stop()
+        self.lister.close()
         self.loader.close()
         self.big_loader.close()

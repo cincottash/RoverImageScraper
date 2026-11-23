@@ -690,8 +690,8 @@ class SetupDialog(QDialog):
         self.has_old = has_old = any(os.path.isfile(os.path.join(self.old_dir, n)) for n in APP_DATA_FILES)
         self.copy_box = QCheckBox("Copy Existing App Data")
         self.copy_box.setChecked(True)
-        self.copy_box.setToolTip("Copies settings, scan results, request counts and the list of photos unavailable "
-                                 "at NASA. The originals are left where they are.")
+        self.copy_box.setToolTip("Copies settings, scan results, request counts, the list of photos unavailable "
+                                 "at NASA and the photo details. The originals are left where they are.")
         self.copy_box.setVisible(has_old)
         lay.addWidget(self.copy_box)
         self.copy_from = label(f"From {self.old_dir}", "muted", wrap=True)     # the path, below its check box
