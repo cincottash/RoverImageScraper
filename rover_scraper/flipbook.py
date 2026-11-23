@@ -10,9 +10,8 @@ from __future__ import annotations
 from typing import Callable
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QImage, QIntValidator, QPixmap
-from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider, QVBoxLayout,
-                               QWidget)
+from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 
 from photo_library import PhotoFile
 
@@ -205,69 +204,61 @@ class FlipbookBar(QWidget):
         row1 = QHBoxLayout()
         self.play_btn = QPushButton("▶  Play")
         self.play_btn.setObjectName("primary")
-        self.play_btn.setToolTip("Play the photos from From to To as a flipbook (P)")
+        self.play_btn.setToolTip("Play as a flipbook (P): the photos you selected, or this photo's whole camera "
+                                 "folder")
         row1.addWidget(self.play_btn)
         row1.addSpacing(10)
-        row1.addWidget(QLabel("From"))
-        self.from_edit = QLineEdit()
-        self.from_edit.setValidator(QIntValidator(0, 10 ** 7))
-        self.from_edit.setFixedWidth(70)
-        self.from_edit.setToolTip("The first photo number")
-        row1.addWidget(self.from_edit)
-        self.from_here = QPushButton("Set From Here")
-        self.from_here.setToolTip("Start the flipbook at the photo shown")
-        row1.addWidget(self.from_here)
+        row1.addWidget(QLabel("Speed"))
+        self.speed = QSlider(Qt.Orientation.Horizontal)
+        self.speed.setRange(FPS_MIN, FPS_MAX)
+        self.speed.setValue(8)
+        self.speed.setFixedWidth(160)
+        row1.addWidget(self.speed)
+        self.speed_label = QLabel("")
+        self.speed_label.setObjectName("muted")
+        self.speed_label.setMinimumWidth(self.speed_label.fontMetrics().horizontalAdvance("30 photos/s") + 6)
+        row1.addWidget(self.speed_label)
         row1.addSpacing(10)
-        row1.addWidget(QLabel("To"))
-        self.to_edit = QLineEdit()
-        self.to_edit.setValidator(QIntValidator(0, 10 ** 7))
-        self.to_edit.setFixedWidth(70)
-        self.to_edit.setToolTip("The last photo number")
-        row1.addWidget(self.to_edit)
-        self.to_here = QPushButton("Set To Here")
-        self.to_here.setToolTip("End the flipbook at the photo shown")
-        row1.addWidget(self.to_here)
+        self.loop_box = QCheckBox("Loop")
+        self.loop_box.setChecked(True)
+        self.loop_box.setToolTip("Start again from the first photo after the last")
+        row1.addWidget(self.loop_box)
+        self.same_box = QCheckBox("Skip Odd Sizes")
+        self.same_box.setChecked(True)
+        self.same_box.setToolTip("Skip photos that aren't the same size as the first one. NASA's folders often mix "
+                                 "small thumbnails and cut-out parts in with the full photos, which makes the film "
+                                 "jump; untick it to play every photo")
+        row1.addWidget(self.same_box)
         row1.addStretch()
         self.status = QLabel("")
         self.status.setObjectName("muted")
         row1.addWidget(self.status)
         lay.addLayout(row1)
         row2 = QHBoxLayout()
-        row2.addWidget(QLabel("Speed"))
-        self.speed = QSlider(Qt.Orientation.Horizontal)
-        self.speed.setRange(FPS_MIN, FPS_MAX)
-        self.speed.setValue(8)
-        self.speed.setFixedWidth(160)
-        row2.addWidget(self.speed)
-        self.speed_label = QLabel("")
-        self.speed_label.setObjectName("muted")
-        self.speed_label.setMinimumWidth(self.speed_label.fontMetrics().horizontalAdvance("30 photos/s") + 6)
-        row2.addWidget(self.speed_label)
-        row2.addSpacing(10)
-        self.loop_box = QCheckBox("Loop")
-        self.loop_box.setChecked(True)
-        self.loop_box.setToolTip("Start again from the first photo after the last")
-        row2.addWidget(self.loop_box)
-        self.same_box = QCheckBox("Same Size Only")
-        self.same_box.setChecked(True)
-        self.same_box.setToolTip("Skip photos of another size than the first (folders often mix full frames "
-                                 "with thumbnails and parts of frames, which makes the film jump)")
-        row2.addWidget(self.same_box)
-        row2.addStretch()
         self.book_label = QLabel("")
         self.book_label.setObjectName("value")
         row2.addWidget(self.book_label)
+        row2.addStretch()
+        self.reverse_btn = QPushButton("Reverse")
+        self.reverse_btn.setToolTip("Play the photos in the opposite order")
+        row2.addWidget(self.reverse_btn)
+        self.edit_btn = QPushButton("Edit Frames")
+        self.edit_btn.setToolTip("Show this flipbook's frames as thumbnails: Delete removes, Ctrl+C and Ctrl+V "
+                                 "copy and paste, right-click for more")
+        row2.addWidget(self.edit_btn)
         self.save_btn = QPushButton("Save Flipbook…")
-        self.save_btn.setToolTip("Keep this flipbook (its photos, speed and options) under Flipbooks in Browse")
+        self.save_btn.setToolTip("Keep these photos, in this order, with the speed and options, under Flipbooks")
         row2.addWidget(self.save_btn)
         self.save_new_btn = QPushButton("Save as New…")
+        self.save_new_btn.setToolTip("Keep a copy of this flipbook under another name")
         row2.addWidget(self.save_new_btn)
         self.delete_btn = QPushButton("Delete…")
+        self.delete_btn.setToolTip("Delete this flipbook (its photos are kept)")
         row2.addWidget(self.delete_btn)
         lay.addLayout(row2)
         self.speed.valueChanged.connect(self._show_speed)
         self._show_speed(self.speed.value())
-        self.set_book(None, dirty=False)
+        self.set_book(None)
 
     def _show_speed(self, v: int) -> None:
         self.speed_label.setText(f"{v} photo/s" if v == 1 else f"{v} photos/s")
@@ -275,22 +266,12 @@ class FlipbookBar(QWidget):
     def set_playing(self, playing: bool) -> None:
         self.play_btn.setText("❚❚  Pause" if playing else "▶  Play")
 
-    def set_range_enabled(self, enabled: bool) -> None:
-        """From and To apply to a camera folder's range; a flipbook of chosen photos has none."""
-        for w in (self.from_edit, self.to_edit, self.from_here, self.to_here):
-            w.setEnabled(enabled)
-        chosen = "This flipbook plays the photos chosen for it"
-        self.from_edit.setToolTip("The first photo number" if enabled else chosen)
-        self.to_edit.setToolTip("The last photo number" if enabled else chosen)
-        self.from_edit.setPlaceholderText("" if enabled else "—")
-        self.to_edit.setPlaceholderText("" if enabled else "—")
-
-    def set_book(self, name: str | None, dirty: bool) -> None:
-        """name: the saved flipbook being shown (None: a new one). dirty: changed since it was saved."""
+    def set_book(self, name: str | None) -> None:
+        """name: the saved flipbook shown (its changes are saved as they're made); None: photos not saved yet."""
         saved = name is not None
-        self.book_label.setText(f"{name}{' (changed)' if dirty else ''}" if saved else "")
+        self.book_label.setText(f"Flipbook: {name}" if saved else "")
         self.book_label.setVisible(saved)
-        self.save_btn.setText("Save Changes" if saved else "Save Flipbook…")
-        self.save_btn.setEnabled(dirty or not saved)
+        self.save_btn.setVisible(not saved)
+        self.edit_btn.setVisible(saved)
         self.save_new_btn.setVisible(saved)
         self.delete_btn.setVisible(saved)

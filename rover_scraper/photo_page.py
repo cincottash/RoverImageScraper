@@ -661,8 +661,12 @@ class PhotosPage(QWidget):
         self.fav_item: QTreeWidgetItem | None = None     # "All Favorite Photos", on the Favorites tab
         self.browse_tab = "Sols"
         self.flip_book: Flipbook | None = None          # the saved flipbook shown, if any
-        self.flip_dirty = False
-        self.flip_ctx: tuple[str, int, str] | None = None    # (rover, sol, camera) the flipbook bar is set for
+        self.flip_frames: list[PhotoFile] = []          # its frames in order (or what Play played last)
+        self.missing_frames = 0                         # its photos that aren't in this photo folder
+        self.play_set: list[PhotoFile] | None = None    # photos selected when the full-size view opened: Play's
+        self.flip_reverse = False                       # play them (or the folder) backwards
+        self.clipboard: list[PhotoFile] = []            # Ctrl+C, for pasting into a flipbook
+        self.flip_ctx: tuple[str, int, str] | None = None    # (rover, sol, camera): the folder Play plays
         self.flip_source: list[PhotoFile] = []          # that camera folder's photos
         self.flip_pending: tuple | None = None          # the camera folder being read for the bar
         self.play_when_read = False                     # Play was pressed while it was being read
@@ -698,6 +702,9 @@ class PhotosPage(QWidget):
         self.view_key: tuple | None = None                            # what the grid shows
         self.full_cache: collections.OrderedDict = collections.OrderedDict()      # path -> QPixmap, a few
         self.extra_details: Callable[[PhotoFile], list[tuple[str, str]]] | None = None   # details from elsewhere
+        # A button under them when a photo has no details of its own: (text, tooltip, what it does), or None
+        self.details_action: Callable[[PhotoFile], tuple[str, str, Callable[[], None]] | None] | None = None
+        self._action_fn: Callable[[], None] | None = None
         self.sort_timer = QTimer(self, singleShot=True, interval=1500)   # re-sort by count while counting
         self.sort_timer.timeout.connect(self.apply_sol_sort)
         self._build()
@@ -709,7 +716,10 @@ class PhotosPage(QWidget):
         self._build_flipbook()
         # F: favorite; P: play or pause the flipbook. Not while typing (a text box takes its own keys).
         self.shortcuts = {}
-        for key, slot in (("F", self.toggle_favorite), ("P", self._play_key)):
+        # Delete takes frames out of a saved flipbook (never deletes a photo); Ctrl+C / Ctrl+V copy photos and paste
+        # them into a flipbook. A text box keeps these keys for its own text.
+        for key, slot in (("F", self.toggle_favorite), ("P", self._play_key), ("Del", self._delete_key),
+                          ("Ctrl+C", self._copy_photos), ("Ctrl+V", self._paste_frames)):
             sc = QShortcut(QKeySequence(key), self)
             sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             sc.activated.connect(slot)
@@ -908,6 +918,13 @@ class PhotosPage(QWidget):
         self.note_edit.editingFinished.connect(self._save_note)
         nl.addWidget(self.note_edit, 1)
         dl.addWidget(self.note_row)
+        self.lookup_btn = QPushButton("")                 # Look Up Again / Try Again / Add API Key
+        self.lookup_btn.setVisible(False)
+        self.lookup_btn.clicked.connect(self._run_details_action)
+        lookup_row = QHBoxLayout()
+        lookup_row.addWidget(self.lookup_btn)
+        lookup_row.addStretch()
+        dl.addLayout(lookup_row)
         self.sel_note = _label("", "muted")              # "5 photos selected"
         self.sel_note.setVisible(False)
         dl.addWidget(self.sel_note)
@@ -1043,16 +1060,19 @@ class PhotosPage(QWidget):
         self.settings.photo_sol_sort = (f"{'photos' if column == 1 else 'sol'}:"
                                         f"{'desc' if order == Qt.SortOrder.DescendingOrder else 'asc'}")
         self.save_settings()
-        self.apply_sol_sort()
+        # Only sorts: what's chosen stays chosen, and the list shows the top of the new order (jumping to the
+        # chosen sol looked as if sorting had chosen it)
+        self.apply_sol_sort(keep_in_view=False)
+        self.tree.scrollToTop()
 
-    def apply_sol_sort(self) -> None:
-        """Sort the sols' list the saved way, keeping the chosen row in view."""
+    def apply_sol_sort(self, keep_in_view: bool = True) -> None:
+        """Sort the sols' list the saved way (keep_in_view: scroll to the chosen row afterwards)."""
         column, order = self._sol_sort()
         self.tree.sort_state = (column, order == Qt.SortOrder.AscendingOrder)
         self.tree.header().setSortIndicator(column, order)
         cur = self.tree.currentItem()
         self.tree.sortItems(column, order)
-        if cur is not None:
+        if cur is not None and keep_in_view:
             self.tree.scrollToItem(cur)
 
     def _sort_if_by_count(self) -> None:
@@ -1337,7 +1357,8 @@ class PhotosPage(QWidget):
         self._pause_flipbook(select=False)
         if key[0] != self.FLIPBOOK and self.flip_book is not None:      # left a saved flipbook
             self.flip_book, self.flip_ctx = None, None
-            self.flip_bar.set_book(None, dirty=False)
+            self.flip_bar.set_book(None)
+        self.flip_reverse = False
         if key[0] == self.NEWEST:
             photos = list(self.newest)
             title = f"Newest Downloads · {count_text(len(photos), 'photo')}"
@@ -1684,13 +1705,37 @@ class PhotosPage(QWidget):
             text = "★  Remove from Favorites" if all_fav else "☆  Add to Favorites"
         else:
             text = f"★  Remove {n:,} Photos from Favorites" if all_fav else f"☆  Add {n:,} Photos to Favorites"
+        book = self._book_view()
+        if book is not None:                           # a saved flipbook's frames: editing them
+            frames = "Frame" if n == 1 else f"{n:,} Frames"
+            act = menu.addAction(f"Remove {frames} from Flipbook", self._remove_frames)
+            act.setShortcut(QKeySequence("Del"))
+            menu.addAction(f"Duplicate {frames}", self._duplicate_frames)
+            act = menu.addAction("Copy", self._copy_photos)
+            act.setShortcut(QKeySequence("Ctrl+C"))
+            act = menu.addAction(f"Paste {count_text(len(self.clipboard), 'Photo')} After" if self.clipboard
+                                 else "Paste After", self._paste_frames)
+            act.setShortcut(QKeySequence("Ctrl+V"))
+            act.setEnabled(bool(self.clipboard))
+            menu.addAction("Move Earlier", lambda: self._move_frames(-1))
+            menu.addAction("Move Later", lambda: self._move_frames(1))
+            menu.addAction("Reverse All Frames", self._reverse)
+            menu.addSeparator()
+            act = menu.addAction("Play From Here", self._play_key)
+            act.setShortcut(QKeySequence("P"))
+            menu.addSeparator()
         menu.addAction(text, self.toggle_favorite)
         sub = menu.addMenu("Add to Flipbook" if n == 1 else f"Add {n:,} Photos to Flipbook")
         sub.addAction("New Flipbook…", lambda: self._add_to_new_flipbook(photos))
-        if self.favs.flipbooks:
+        others = [b for b in self.favs.flipbooks if book is None or b.id != book.id]
+        if others:
             sub.addSeparator()
-            for b in self.favs.flipbooks:
+            for b in others:
                 sub.addAction(b.name, lambda b_id=b.id: self._add_to_flipbook(b_id, photos))
+        if book is None:
+            act = menu.addAction("Copy", self._copy_photos)
+            act.setShortcut(QKeySequence("Ctrl+C"))
+            act.setToolTip("To paste into a flipbook")
         menu.addSeparator()
         menu.addAction("View Full Size", self.open_full)
         menu.addAction("Show in Folder", lambda: show_in_folder(p.path))
@@ -1702,8 +1747,18 @@ class PhotosPage(QWidget):
         self.grid_title.setText(text)
         QTimer.singleShot(4000, lambda: self.grid_title.text() == text and self.grid_title.setText(before))
 
+    def _unique_in_time_order(self, photos: list[PhotoFile]) -> list[tuple]:
+        """Their keys, each once, in the order they were taken (when known for all), else in the grid's order."""
+        seen, keys = set(), []
+        for p in self._in_time_order(photos):
+            k = self._key_of(p)
+            if k not in seen:
+                seen.add(k)
+                keys.append(k)
+        return keys
+
     def _add_to_new_flipbook(self, photos: list[PhotoFile]) -> None:
-        keys = sorted({self._key_of(p) for p in photos})
+        keys = self._unique_in_time_order(photos)
         if not keys:
             return
         first = photos[0]
@@ -1725,7 +1780,7 @@ class PhotosPage(QWidget):
         b = self.favs.flipbook(book_id)
         if b is None:
             return
-        keys = [list(k) for k in sorted({self._key_of(p) for p in photos})]
+        keys = [list(k) for k in self._unique_in_time_order(photos)]
         if b.photos is not None:
             self._finish_book_add(b, keys)
             return
@@ -1749,8 +1804,8 @@ class PhotosPage(QWidget):
 
     def _finish_book_add(self, b: Flipbook, keys: list[list]) -> None:
         have = {tuple(k) for k in b.photos}
-        added = [k for k in keys if tuple(k) not in have]
-        b.photos = sorted(b.photos + added)
+        added = [k for k in keys if tuple(k) not in have]   # at the end, in order (photos it has already: once)
+        b.photos = b.photos + added
         self.favs.save_flipbook(b)
         self._refresh_special()
         self._notify(f"Added {count_text(len(added), 'photo')} to the flipbook “{b.name}”")
@@ -1765,7 +1820,7 @@ class PhotosPage(QWidget):
     def _show_tree_menu(self, tree: QTreeWidget, pos) -> None:
         menu = self._tree_menu(tree.itemAt(pos))
         if menu is not None:
-            menu.exec(self.tree.viewport().mapToGlobal(pos))
+            menu.exec(tree.viewport().mapToGlobal(pos))
 
     def _add_folder(self, k) -> None:
         self.favs.add(*k)
@@ -1801,13 +1856,11 @@ class PhotosPage(QWidget):
         self.player.finished.connect(lambda: self._pause_flipbook(select=True, finished=True))
         bar = self.flip_bar
         bar.play_btn.clicked.connect(self._play_key)
-        bar.from_here.clicked.connect(lambda: self._set_bound(bar.from_edit))
-        bar.to_here.clicked.connect(lambda: self._set_bound(bar.to_edit))
-        bar.from_edit.editingFinished.connect(self._flip_range_changed)
-        bar.to_edit.editingFinished.connect(self._flip_range_changed)
         bar.speed.valueChanged.connect(self._flip_speed)
         bar.loop_box.toggled.connect(self._flip_options)
         bar.same_box.toggled.connect(self._flip_options)
+        bar.reverse_btn.clicked.connect(self._reverse)
+        bar.edit_btn.clicked.connect(self._edit_frames)
         bar.save_btn.clicked.connect(lambda: self._save_flipbook(as_new=False))
         bar.save_new_btn.clicked.connect(lambda: self._save_flipbook(as_new=True))
         bar.delete_btn.clicked.connect(lambda: self.flip_book and self._delete_flipbook(self.flip_book.id))
@@ -1827,25 +1880,24 @@ class PhotosPage(QWidget):
             return [x for x in self.model.photos if x.camera == p.camera]
         return None
 
+    def _book_view(self) -> Flipbook | None:
+        """The saved flipbook shown in the grid (its frames), if one is."""
+        b = self.flip_book
+        return b if b is not None and self.view_key == (self.FLIPBOOK, b.id) else None
+
     def _sync_flip_ctx(self, p: PhotoFile) -> None:
-        """The bar follows the photo's camera folder: From and To start as its first and last photo. A folder
-        that isn't in memory is read in the background."""
-        if self._list_book() is not None and any(x.path == p.path for x in self.flip_source):
-            return                                     # a photo of the chosen-photos flipbook shown
+        """Without a selection, Play plays the shown photo's camera folder: it's read (in the background if it isn't
+        in memory) when a photo of another folder is shown."""
+        if self._book_view() is not None or self.play_set:
+            return
         ctx = (p.rover, p.sol, p.camera)
         if ctx == self.flip_ctx:
             return
-        self.flip_bar.set_range_enabled(True)
-        if self.flip_book is not None:                 # left the saved flipbook's folder
-            self.flip_book = None
-            self.flip_bar.set_book(None, dirty=False)
         self.flip_ctx = ctx
         source = self._camera_photos(p)
         if source is None:
             self.flip_source = []
             self.flip_pending = ctx
-            self.flip_bar.from_edit.setText("")
-            self.flip_bar.to_edit.setText("")
             self.flip_bar.status.setText("Reading the camera folder…")
             folder = self.loaded_folder or ""
             self.lister.request_call(("flipsrc", (folder, p.rover, ("camera", p.sol, p.camera))),
@@ -1856,12 +1908,26 @@ class PhotosPage(QWidget):
     def _set_flip_source(self, source: list[PhotoFile]) -> None:
         self.flip_pending = None
         self.flip_source = source
-        nums = [x.number for x in source]
-        bar = self.flip_bar
-        bar.from_edit.setText(str(min(nums)) if nums else "")
-        bar.to_edit.setText(str(max(nums)) if nums else "")
-        cam = self.flip_ctx[2] if self.flip_ctx else ""
-        bar.status.setText(f"{camera_name(cam)} · {count_text(len(nums), 'photo')}" if nums else "")
+        self._show_flip_status()
+
+    def _show_flip_status(self) -> None:
+        """What Play will play, when it isn't playing."""
+        if self.player.playing:
+            return
+        b = self._book_view()
+        back = " backwards" if self.flip_reverse and b is None else ""
+        if b is not None:
+            text = f"{count_text(len(self.flip_frames), 'frame')}"
+        elif self.play_set:
+            text = f"Plays the {count_text(len(self.play_set), 'selected photo')}{back}"
+        elif self.flip_pending is not None:
+            text = "Reading the camera folder…"
+        elif self.flip_ctx:
+            text = (f"Plays {camera_name(self.flip_ctx[2])}: {count_text(len(self.flip_source), 'photo')}{back}"
+                    if self.flip_source else "")
+        else:
+            text = ""
+        self.flip_bar.status.setText(text)
 
     def _flip_source_arrived(self, list_key, photos: list[PhotoFile]) -> None:
         _folder, rover, key = list_key
@@ -1872,34 +1938,22 @@ class PhotosPage(QWidget):
                 self.play_when_read = False
                 self._play()
 
-    def _bounds(self) -> tuple[int, int]:
-        nums = [x.number for x in self.flip_source] or [0]
-        bar = self.flip_bar
-        first = int(bar.from_edit.text()) if bar.from_edit.text().isdigit() else min(nums)
-        last = int(bar.to_edit.text()) if bar.to_edit.text().isdigit() else max(nums)
-        return (first, last) if first <= last else (last, first)
-
-    def _list_book(self) -> Flipbook | None:
-        """The saved flipbook shown, if it's made of chosen photos (not a From–To range)."""
-        b = self.flip_book
-        if b is not None and b.photos is not None and self.flip_ctx == ("list", b.id):
-            return b
-        return None
+    def _in_time_order(self, photos: list[PhotoFile]) -> list[PhotoFile]:
+        """In the order they were taken when that's known for all of them; otherwise as they are."""
+        if self.photo_time is not None and photos:
+            times = [self.photo_time(x) for x in photos]
+            if all(times):
+                order = sorted(range(len(photos)), key=lambda i: (times[i], photos[i].number))
+                return [photos[i] for i in order]
+        return list(photos)
 
     def _frames(self) -> list[PhotoFile]:
-        """The photos From to To (or a chosen-photos flipbook's photos), in the order they were taken when that's
-        known for all of them."""
-        if self._list_book() is not None:
-            frames = list(self.flip_source)
-        else:
-            first, last = self._bounds()
-            frames = [x for x in self.flip_source if first <= x.number <= last]
-        if self.photo_time is not None and frames:
-            times = [self.photo_time(x) for x in frames]
-            if all(times):
-                order = sorted(range(len(frames)), key=lambda i: (times[i], frames[i].number))
-                frames = [frames[i] for i in order]
-        return frames
+        """What Play plays: a saved flipbook's frames as they are; otherwise the selected photos (or the shown
+        photo's camera folder) in the order they were taken, backwards if Reverse is on."""
+        if self._book_view() is not None:
+            return list(self.flip_frames)
+        frames = self._in_time_order(self.play_set or self.flip_source)
+        return frames[::-1] if self.flip_reverse else frames
 
     def _play_key(self) -> None:
         """P, or Play: play the flipbook from the photo shown (opening the full-size view), or pause it."""
@@ -1923,9 +1977,16 @@ class PhotosPage(QWidget):
             return
         frames = self._frames()
         if not frames:
-            self.flip_bar.status.setText("No photos between From and To")
+            self.flip_bar.status.setText("Nothing to play")
             return
-        start = next((i for i, x in enumerate(frames) if x.path == p.path), 0)
+        if self._book_view() is None:
+            self.flip_frames = frames                  # what Save Flipbook keeps
+        # From the photo shown (a camera folder, or Play From Here in a flipbook); a selection from its start
+        start = 0 if self.play_set else next((i for i, x in enumerate(frames) if x.path == p.path), 0)
+        if self._book_view() is not None and self.current is not None:      # the chosen frame (duplicates)
+            row = self.grid.currentIndex().row()
+            if 0 <= row < len(frames) and frames[row].path == p.path:
+                start = row
         self._apply_flip_options()
         self.player.load(frames, start)
         self.player.play()
@@ -1966,70 +2027,85 @@ class PhotosPage(QWidget):
             if self.stack.currentWidget() is self.full_page:
                 self._load_full(p)
 
-    def _set_bound(self, edit: QLineEdit) -> None:
-        p = self.player.shown() if self.player.playing else self.current
-        if p is None:
+    def _save_book_options(self) -> None:
+        """A saved flipbook keeps its speed and options as they're changed."""
+        b = self._book_view()
+        if b is None:
             return
-        self._sync_flip_ctx(p)
-        edit.setText(str(p.number))
-        self._flip_range_changed()
-
-    def _mark_dirty(self) -> None:
-        if self.flip_book is not None:
-            self.flip_dirty = True
-            self.flip_bar.set_book(self.flip_book.name, dirty=True)
-
-    def _flip_range_changed(self) -> None:
-        self._mark_dirty()
-        if self.player.playing:                   # play the new range from the frame shown
-            self.player.pause()
-            self._play()
+        bar = self.flip_bar
+        b.fps, b.loop, b.same_size = float(bar.speed.value()), bar.loop_box.isChecked(), bar.same_box.isChecked()
+        self.favs.save_flipbook(b)
+        self._refresh_special()
 
     def _flip_speed(self, fps: int) -> None:
         self.player.set_fps(fps)
-        self._mark_dirty()
+        self._save_book_options()
 
     def _flip_options(self) -> None:
         self._apply_flip_options()
-        self._mark_dirty()
+        self._save_book_options()
+
+    def _restart_if_playing(self) -> None:
+        if self.player.playing:                        # play the new order from the frame shown
+            self.player.pause()
+            self._play()
+
+    def _reverse(self) -> None:
+        """Reverse: a saved flipbook's frames are put in the opposite order (and saved); otherwise what Play plays
+        is played backwards."""
+        if self._book_view() is not None:
+            self._set_book_frames(self.flip_frames[::-1])
+            self._notify("Reversed the flipbook's frames")
+        else:
+            self.flip_reverse = not self.flip_reverse
+            self._show_flip_status()
+        self._restart_if_playing()
+
+    def _edit_frames(self) -> None:
+        """Edit Frames: the saved flipbook's frames as thumbnails."""
+        if self._book_view() is None:
+            return
+        self.close_full()
+        self._notify("Delete removes frames · Ctrl+C, Ctrl+V copy and paste · right-click for more · P plays")
 
     def _save_flipbook(self, as_new: bool) -> None:
-        p = self.current or self.player.shown()
-        if self.flip_ctx is None and p is not None:
-            self._sync_flip_ctx(p)
-        if self.flip_ctx is None or self.flip_pending is not None:     # not yet: its folder is being read
-            return
-        chosen = self._list_book()
-        first, last = self._bounds()
-        bar = self.flip_bar
-        if self.flip_book is not None and not as_new:
-            b = self.flip_book
+        """Save Flipbook… (what Play plays: the selected photos or the camera folder, in its order), or Save as
+        New… (a copy of the saved flipbook shown)."""
+        book = self._book_view()
+        if book is not None and as_new:
+            frames = list(self.flip_frames)
+            default = f"{book.name} (copy)"
         else:
-            if chosen is not None:
-                rover, sol, cam = chosen.rover, chosen.sol, chosen.camera
-                default = f"{chosen.name} (copy)"
-            else:
-                rover, sol, cam = self.flip_ctx
-                default = f"{rover} · Sol {sol:,} · {camera_name(cam)}"
-            name = self.ask_text("Save Flipbook" if not as_new else "Save as New Flipbook", "Name:", default)
-            if not name or not name.strip():
+            p = self.current or self.player.shown()
+            if p is not None:
+                self._sync_flip_ctx(p)
+            if self.flip_pending is not None:          # not yet: its folder is being read
                 return
-            b = Flipbook(name=name.strip(), rover=rover, sol=sol, camera=cam, first=first, last=last,
-                         photos=[list(k) for k in chosen.photos] if chosen is not None else None)
-        if chosen is None:
-            b.first, b.last = first, last
-        b.fps, b.loop, b.same_size = float(bar.speed.value()), bar.loop_box.isChecked(), bar.same_box.isChecked()
+            frames = self._frames()
+            if not frames:
+                return
+            one = len({(x.rover, x.sol, x.camera) for x in frames}) == 1
+            default = (f"{frames[0].rover} · Sol {frames[0].sol:,} · {camera_name(frames[0].camera)}" if one
+                       else f"{count_text(len(frames), 'photo')}")
+        name = self.ask_text("Save as New Flipbook" if as_new else "Save Flipbook", "Name:", default)
+        if not name or not name.strip():
+            return
+        bar = self.flip_bar
+        first = frames[0]
+        b = Flipbook(name=name.strip(), rover=first.rover, sol=first.sol, camera=first.camera, first=0, last=0,
+                     fps=float(bar.speed.value()), loop=bar.loop_box.isChecked(),
+                     same_size=bar.same_box.isChecked(), photos=[list(self._key_of(x)) for x in frames])
         self.favs.save_flipbook(b)
-        self.flip_book, self.flip_dirty = b, False
-        bar.set_book(b.name, dirty=False)
         self._refresh_special()
+        self._notify(f"Saved the flipbook “{b.name}” ({count_text(len(frames), 'frame')}): it's in the Flipbooks "
+                     f"tab")
 
     def _open_flipbook(self, book_id: str) -> None:
         b = self.favs.flipbook(book_id)
         folder = self.loaded_folder or ""
         if b is None:
             return
-        self.flip_book, self.flip_dirty = b, False
+        self.flip_book = b
         key = (self.FLIPBOOK, b.id)
         if not folder or not os.path.isdir(folder):
             self._show_message(key, b.name, "Choose a photo folder on the Download page to play this flipbook.")
@@ -2052,37 +2128,140 @@ class PhotosPage(QWidget):
         if b is None or list_key[2] != (self.FLIPBOOK, b.id):
             return
         missing = 0
-        if isinstance(source, tuple):                  # chosen photos: (found, how many aren't in this folder)
-            source, missing = source
-            self.flip_ctx = ("list", b.id)
-        else:
-            self.flip_ctx = (b.rover, b.sol, b.camera)
-        self.flip_source, self.flip_pending = source, None
+        if isinstance(source, tuple):                  # its photos: (found, how many aren't in this folder)
+            frames, missing = source
+        else:                                          # an older flipbook made of a From–To range: kept as its
+            frames = self._in_time_order([x for x in source if b.first <= x.number <= b.last])   # photos now
+            if frames:
+                b.photos = [list(self._key_of(x)) for x in frames]
+                self.favs.save_flipbook(b)
+        self.flip_frames = frames
+        self.flip_ctx, self.flip_pending, self.play_set = None, None, None
         bar = self.flip_bar
-        chosen = b.photos is not None
-        bar.set_range_enabled(not chosen)
         for w in (bar.speed, bar.loop_box, bar.same_box):
             w.blockSignals(True)
-        bar.from_edit.setText("" if chosen else str(b.first))
-        bar.to_edit.setText("" if chosen else str(b.last))
         bar.speed.setValue(int(round(b.fps)))
         bar._show_speed(bar.speed.value())
         bar.loop_box.setChecked(b.loop)
         bar.same_box.setChecked(b.same_size)
         for w in (bar.speed, bar.loop_box, bar.same_box):
             w.blockSignals(False)
-        bar.set_book(b.name, dirty=False)
-        frames = self._frames()
-        title = f"Flipbook · {b.name} · {count_text(len(frames), 'photo')}"
-        if missing:
-            title += f" · {missing:,} not in this photo folder"
-        if chosen:
-            bar.status.setText(f"{count_text(len(frames), 'chosen photo')}")
-        self._show_photos(list_key[2], frames, title, show_camera=chosen,
+        bar.set_book(b.name)
+        self.missing_frames = missing
+        self._show_photos(list_key[2], frames, self._book_title(), show_camera=True,
                           empty="None of this flipbook's photos are in this photo folder.")
+        self._show_flip_status()
         if frames:
             self.open_full()
             self._play()
+
+    def _book_title(self) -> str:
+        b = self.flip_book
+        title = f"Flipbook · {b.name} · {count_text(len(self.flip_frames), 'frame')}"
+        if self.missing_frames:
+            title += f" · {self.missing_frames:,} not in this photo folder"
+        return title
+
+    # ---- editing a saved flipbook's frames (its grid shows them in order) ----------------------------------
+
+    def _frame_rows(self) -> list[int]:
+        """The selected frames' rows (or the chosen frame's)."""
+        rows = sorted({i.row() for i in self.grid.selectionModel().selectedIndexes()})
+        if not rows and self.grid.currentIndex().isValid():
+            rows = [self.grid.currentIndex().row()]
+        return [r for r in rows if 0 <= r < len(self.flip_frames)]
+
+    def _set_book_frames(self, frames: list[PhotoFile], select: list[int] | None = None) -> None:
+        """The saved flipbook's new frames: saved, shown in the grid (select: rows to select after)."""
+        b = self._book_view()
+        if b is None:
+            return
+        self.player.pause()
+        self.flip_bar.set_playing(False)
+        b.photos = [list(self._key_of(x)) for x in frames]
+        self.favs.save_flipbook(b)
+        self.flip_frames = list(frames)
+        self.model.set_photos(self.flip_frames, True)
+        self.grid_title.setText(self._book_title())
+        self._refresh_special()
+        self._show_flip_status()
+        rows = [r for r in (select or []) if 0 <= r < len(frames)]
+        sm = self.grid.selectionModel()
+        if rows:
+            sm.setCurrentIndex(self.model.index(rows[-1]), QItemSelectionModel.SelectionFlag.ClearAndSelect)
+            for r in rows[:-1]:
+                sm.select(self.model.index(r), QItemSelectionModel.SelectionFlag.Select)
+            self.grid.scrollTo(self.model.index(rows[-1]))
+        elif frames:
+            self.grid.setCurrentIndex(self.model.index(0))
+        else:
+            self.current = None
+            self._show_details(None)
+            self.empty.setText("This flipbook has no frames left. Paste photos into it (Ctrl+V) or delete it.")
+            self.stack.setCurrentWidget(self.empty)
+
+    def _remove_frames(self) -> None:
+        rows = self._frame_rows()
+        if self._book_view() is None or not rows:
+            return
+        gone = set(rows)
+        frames = [x for i, x in enumerate(self.flip_frames) if i not in gone]
+        self._set_book_frames(frames, [min(rows[0], len(frames) - 1)] if frames else [])
+        self._notify(f"Removed {count_text(len(rows), 'frame')} from the flipbook")
+
+    def _duplicate_frames(self) -> None:
+        rows = self._frame_rows()
+        if self._book_view() is None or not rows:
+            return
+        copies = [self.flip_frames[r] for r in rows]
+        at = rows[-1] + 1
+        frames = self.flip_frames[:at] + copies + self.flip_frames[at:]
+        self._set_book_frames(frames, list(range(at, at + len(copies))))
+
+    def _copy_photos(self) -> None:
+        """Ctrl+C: the selected photos (or frames) to paste into a flipbook."""
+        if self._book_view() is not None:
+            self.clipboard = [self.flip_frames[r] for r in self._frame_rows()]
+        else:
+            self.clipboard = self.selected_photos() or ([self.current] if self.current else [])
+        if self.clipboard:
+            self._notify(f"Copied {count_text(len(self.clipboard), 'photo')}: paste them into a flipbook with "
+                         f"Ctrl+V")
+
+    def _paste_frames(self) -> None:
+        """Ctrl+V: the copied photos into the flipbook shown, after the chosen frame."""
+        if self._book_view() is None:
+            if self.clipboard:
+                self._notify("Paste works in a flipbook: open one in the Flipbooks tab, then press Ctrl+V")
+            return
+        if not self.clipboard:
+            return
+        rows = self._frame_rows()
+        at = rows[-1] + 1 if rows else len(self.flip_frames)
+        frames = self.flip_frames[:at] + self.clipboard + self.flip_frames[at:]
+        self._set_book_frames(frames, list(range(at, at + len(self.clipboard))))
+        self._notify(f"Pasted {count_text(len(self.clipboard), 'photo')}")
+
+    def _move_frames(self, step: int) -> None:
+        """Move the selected frames one place earlier (-1) or later (+1)."""
+        rows = self._frame_rows()
+        if self._book_view() is None or not rows:
+            return
+        frames = list(self.flip_frames)
+        picked = set(rows)
+        order = list(range(len(frames)))
+        for r in (rows if step < 0 else reversed(rows)):
+            i = order.index(r)
+            j = i + step
+            if 0 <= j < len(order) and order[j] not in picked:
+                order[i], order[j] = order[j], order[i]
+        new_frames = [frames[i] for i in order]
+        self._set_book_frames(new_frames, [order.index(r) for r in rows])
+
+    def _delete_key(self) -> None:
+        """Delete: only takes frames out of a saved flipbook (never deletes a photo)."""
+        if self._book_view() is not None and self.stack.currentWidget() is not self.full_page:
+            self._remove_frames()
 
     def _rename_flipbook(self, book_id: str) -> None:
         b = self.favs.flipbook(book_id)
@@ -2093,7 +2272,9 @@ class PhotosPage(QWidget):
             b.name = name.strip()
             self.favs.save_flipbook(b)
             if self.flip_book is not None and self.flip_book.id == b.id:
-                self.flip_bar.set_book(b.name, self.flip_dirty)
+                self.flip_bar.set_book(b.name)
+                if self._book_view() is not None:
+                    self.grid_title.setText(self._book_title())
             self._refresh_special()
 
     def _delete_flipbook(self, book_id: str) -> None:
@@ -2103,8 +2284,8 @@ class PhotosPage(QWidget):
             return
         self.favs.delete_flipbook(book_id)
         if self.flip_book is not None and self.flip_book.id == book_id:
-            self.flip_book, self.flip_dirty = None, False
-            self.flip_bar.set_book(None, dirty=False)
+            self.flip_book = None
+            self.flip_bar.set_book(None)
         self._refresh_special()
 
     # ---- showing photos ------------------------------------------------------------------------------------
@@ -2210,9 +2391,11 @@ class PhotosPage(QWidget):
             self._set_detail_rows([])
             self.detail_note.setText("Choose a photo to see its details.")
             self.detail_note.setVisible(True)
+            self._update_lookup_button()
             return
         self.detail_note.setVisible(False)
         self._set_detail_rows(self.details_for(p))
+        self._update_lookup_button()
         self.preview.setPixmap(QPixmap())
         self.big_loader.request(("preview", p.path), p.path, max(self.preview.width(), self.preview.height()) * 2)
 
@@ -2220,6 +2403,20 @@ class PhotosPage(QWidget):
         """Show the current photo's details again (for example after more details arrived)."""
         if self.current is not None:
             self._set_detail_rows(self.details_for(self.current))
+        self._update_lookup_button()
+
+    def _update_lookup_button(self) -> None:
+        action = self.details_action(self.current) if self.details_action and self.current is not None else None
+        self._action_fn = action[2] if action else None
+        self.lookup_btn.setVisible(action is not None)
+        if action:
+            self.lookup_btn.setText(action[0])
+            self.lookup_btn.setToolTip(action[1])
+
+    def _run_details_action(self) -> None:
+        if self._action_fn is not None:
+            self._action_fn()
+            self.refresh_details()
 
     def _note_size(self, key, img: QImage) -> None:
         """Keep a photo's own size, read with its thumbnail or preview; show it if it's the chosen photo."""
@@ -2267,8 +2464,12 @@ class PhotosPage(QWidget):
     def open_full(self) -> None:
         if self.current is None:
             return
+        if self._book_view() is None:                  # several photos selected: Play plays those
+            selected = self.selected_photos()
+            self.play_set = selected if len(selected) > 1 else None
         self.stack.setCurrentWidget(self.full_page)
         self._load_full(self.current)
+        self._show_flip_status()
         self.viewer.setFocus()
 
     def close_full(self) -> None:

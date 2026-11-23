@@ -919,6 +919,8 @@ class MainWindow(QMainWindow):
         self.lookups.finished.connect(self._lookup_finished)
         self.photos_page.extra_details = self._photo_extra_details
         self.photos_page.photo_time = self._photo_time
+        self.photos_page.details_action = self._photo_details_action
+        self.looked_up_again: set = set()               # sols looked up again from the details panel
         self._build_menus()
         self._load_settings_into_widgets()
         self._refresh_library()
@@ -1919,6 +1921,9 @@ class MainWindow(QMainWindow):
         summary = self.details.sol_state(folder, p.rover, p.sol)
         if summary is not None:
             rows = [] if link else describe_sol(summary)
+            if rows and (folder_key(folder), p.rover, p.sol) in self.looked_up_again:
+                rows.append(("Looked Up Again", "This file still matches no single NASA photo. NASA may no longer "
+                                                "list this copy (for example an old thumbnail)."))
             return rows or [("More Details", "None found for this photo.")]
         key = (folder_key(folder), p.rover, p.sol)
         if self.lookups.pending(folder, p.rover, p.sol):
@@ -1932,6 +1937,39 @@ class MainWindow(QMainWindow):
                                      "opened again.")]
         self.lookups.request(folder, p.rover, p.sol)
         return [("More Details", "Looking up…")]
+
+    def _photo_details_action(self, p):
+        """The details panel's button for a photo without details of its own: (text, tooltip, what it does)."""
+        folder = self.photos_page.loaded_folder or self._folder()
+        if not folder:
+            return None
+        info, link = self.details.file_photo(folder, p.rover, p.sol, p.camera, p.number)
+        if info is not None or self.lookups.pending(folder, p.rover, p.sol):
+            return None
+        key = (folder_key(folder), p.rover, p.sol)
+        error = self.lookups.failed.get(key)
+        if error == "no key" and not self.lookup_key:
+            return ("Add API Key…", "Looking up Curiosity and Perseverance needs a Mars Vista API key, pasted on the "
+                                    "Download page", self._ask_for_key)
+        summary = self.details.sol_state(folder, p.rover, p.sol)
+        if error:
+            return ("Try Again", f"Look up sol {p.sol:,}'s details again (the last try failed: {error})",
+                    lambda: self._look_up_again(folder, p.rover, p.sol))
+        if summary is not None and not link:
+            return ("Look Up Again", f"Look up sol {p.sol:,} again and match its files to NASA's photos once more "
+                                     f"(catches photos added since, and look-ups that went wrong). Uses a few Mars "
+                                     f"Vista requests for Curiosity and Perseverance",
+                    lambda: self._look_up_again(folder, p.rover, p.sol))
+        return None
+
+    def _look_up_again(self, folder: str, rover: str, sol: int) -> None:
+        self.details.forget_sol(folder, rover, sol)
+        self.looked_up_again.add((folder_key(folder), rover, sol))
+        self.lookups.request(folder, rover, sol)
+
+    def _ask_for_key(self) -> None:
+        self._show_page("Download")
+        self.key_edit.setFocus()
 
     def _photo_time(self, p) -> str | None:
         """When a photo was taken (ISO, UTC), if its details were looked up: flipbooks play in that order."""
