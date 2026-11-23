@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBo
 from api import SUPPORTED_ROVERS, ApiError, Cancelled, MarsVistaClient, load_api_key, save_api_key
 from photo_library import camera_name, rovers_in, sols_in
 from favorites import FAVORITES_FILE, FavoritesStore, parse_favorites_list
+from slow_moments import SlowMoments
 from photo_page import PhotosPage
 from pds import PdsClient, RequestCounter, RoverSources, is_pds_rover, latest_sol
 from download import NASA_STATUS, make_session
@@ -471,6 +472,10 @@ def apply_theme(app: QApplication, t: dict, only=None) -> None:
                               padding: 5px 16px; color: {t['muted']}; font-weight: 600; }}
         QPushButton#pageTab:hover {{ color: {t['text']}; background: {t['track']}; }}
         QPushButton#pageTab:checked {{ background: {t['accent']}; color: {t['accent_text']}; }}
+        QPushButton#browseTab {{ background: transparent; border: 1px solid transparent; border-radius: 6px;
+                                padding: 4px 4px; color: {t['muted']}; font-weight: 600; min-width: 0; }}
+        QPushButton#browseTab:hover {{ color: {t['text']}; background: {t['track']}; }}
+        QPushButton#browseTab:checked {{ background: {t['accent']}; color: {t['accent_text']}; }}
         QTreeWidget#solTree, QListView#photoGrid {{ background: {t['input']}; border: 1px solid {t['border']};
                                                     border-radius: 6px; }}
         QTreeWidget#solTree::item {{ padding: 2px 0; }}
@@ -902,6 +907,7 @@ class MainWindow(QMainWindow):
                     min(1000, avail.height() - 60) if avail else 900)
         # Favorites and saved flipbooks, in the app data folder (the Photos page shows and changes them)
         self.favorites = FavoritesStore(os.path.join(STATE_DIR, FAVORITES_FILE))
+        self.page_name = "Download"                     # the page shown (read by slow_context on another thread)
         self._build()
         self.popup_opacity = PopupOpacity.for_app(app)
         # Photo details: kept in the app data folder; sols without them are looked up when the Photos page shows
@@ -1848,7 +1854,20 @@ class MainWindow(QMainWindow):
 
     # ---- pages ---------------------------------------------------------------------------------------------
 
+    def slow_context(self) -> str:
+        """What was going on, for slow_moments.log. Called from its watcher thread, so it reads only plain Python
+        values, never widgets."""
+        pp = self.photos_page
+        parts = [f"page: {self.page_name}", f"task: {self.mode}"]
+        if self.page_name == "Photos":
+            parts += [f"counting photos: {'yes' if pp.counter.running else 'no'}",
+                      f"photo list being read: {'yes' if pp.lister.busy() else 'no'}",
+                      f"thumbnails waiting: {pp.loader.waiting()}",
+                      f"flipbook playing: {'yes' if pp.player.playing else 'no'}"]
+        return " · ".join(parts)
+
     def _show_page(self, name: str) -> None:
+        self.page_name = name
         page = self.photos_page if name == "Photos" else self.download_page
         self.pages.setCurrentWidget(page)
         for n, b in self.page_buttons.items():
@@ -3147,6 +3166,8 @@ def main() -> int:
     except AttributeError:
         pass
     win.show()
+    # If the window ever stops responding for half a second or more, slow_moments.log says what it was doing.
+    win.slow_moments = SlowMoments(os.path.join(STATE_DIR, "slow_moments.log"), win.slow_context, win)
     return app.exec()
 
 

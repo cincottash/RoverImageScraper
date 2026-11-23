@@ -7,7 +7,7 @@ Nothing here writes to the photo folder.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
 from api import SUPPORTED_ROVERS
@@ -77,6 +77,9 @@ class PhotoFile:
     sol: int
     camera: str
     number: int
+    # The file's size in bytes, from the folder listing (free on Windows), so showing it needs no disk read.
+    # Not part of a photo's identity.
+    size: int | None = field(default=None, compare=False)
 
     @property
     def name(self) -> str:
@@ -133,8 +136,16 @@ def photos_in(folder: str, rover: str, sol: int, camera: str | None = None) -> l
     for cam in cams:
         entries = _photo_entries(os.path.join(sol_path, cam))
         entries.sort(key=lambda e: photo_number(e.name))
-        out += [PhotoFile(e.path, rover, sol, cam, photo_number(e.name)) for e in entries]
+        out += [PhotoFile(e.path, rover, sol, cam, photo_number(e.name), _entry_size(e)) for e in entries]
     return out
+
+
+def _entry_size(e: os.DirEntry) -> int | None:
+    """On Windows the size comes with the folder listing; elsewhere this reads it (on a background thread)."""
+    try:
+        return e.stat().st_size
+    except OSError:
+        return None
 
 
 def find_photos(folder: str, keys: list[tuple[str, int, str, int]]) -> tuple[list[PhotoFile], int]:
@@ -151,7 +162,7 @@ def find_photos(folder: str, keys: list[tuple[str, int, str, int]]) -> tuple[lis
         if e is None:
             missing += 1
         else:
-            found.append(PhotoFile(e.path, rover, sol, camera, number))
+            found.append(PhotoFile(e.path, rover, sol, camera, number, _entry_size(e)))
     return found, missing
 
 

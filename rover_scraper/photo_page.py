@@ -115,6 +115,10 @@ class ImageLoader(QObject):
         with self._lock:
             return not self._closed and (bool(self._waiting) or bool(self._low) or self._active > 0)
 
+    def waiting(self) -> int:
+        with self._lock:
+            return len(self._waiting) + len(self._low)
+
     def request(self, key, path: str, size: int | None, low: bool = False) -> None:
         """low: read ahead (photos likely to be wanted next), only while nothing else is waiting, in the order
         asked. A normal request for the same key takes it over."""
@@ -183,7 +187,7 @@ class PhotoLister(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._cond = threading.Condition()
-        self._job = None
+        self._jobs: collections.OrderedDict = collections.OrderedDict()   # kind -> (key, fn): newest of each kind
         self._low: list = []
         self._active = False                     # a normal request is being read
         self._closed = False
@@ -194,13 +198,18 @@ class PhotoLister(QObject):
         self.request_call(key, functools.partial(photos_in, folder, rover, sol, camera), low)
 
     def request_call(self, key, fn: Callable[[], object], low: bool = False) -> None:
-        """Any reading of the folder: fn() runs on the background thread; listed(key, its result) follows."""
+        """Any reading of the folder: fn() runs on the background thread; listed(key, its result) follows.
+        A request replaces one of the same kind still waiting (key[0]: "view", "expand", …), not other kinds."""
         with self._cond:
             if low:
                 self._low.append((key, fn))
                 del self._low[:-4]               # only the latest few read-ahead lists
             else:
-                self._job = (key, fn)
+                kind = key[0] if isinstance(key, tuple) and key else None
+                if kind in ("favorites", "flipbook"):   # what the grid shows: one at a time, like "view"
+                    kind = "view"
+                self._jobs.pop(kind, None)
+                self._jobs[kind] = (key, fn)
             self._cond.notify()
 
     def clear_low(self) -> None:
@@ -210,24 +219,24 @@ class PhotoLister(QObject):
     def busy(self) -> bool:
         """A normal request is waiting or being read (read-ahead doesn't count)."""
         with self._cond:
-            return not self._closed and (self._job is not None or self._active)
+            return not self._closed and (bool(self._jobs) or self._active)
 
     def close(self) -> None:
         with self._cond:
             self._closed = True
-            self._job = None
+            self._jobs.clear()
             self._low.clear()
             self._cond.notify_all()
 
     def _run(self) -> None:
         while True:
             with self._cond:
-                while self._job is None and not self._low and not self._closed:
+                while not self._jobs and not self._low and not self._closed:
                     self._cond.wait()
                 if self._closed:
                     return
-                if self._job is not None:
-                    (key, fn), self._job = self._job, None
+                if self._jobs:
+                    _kind, (key, fn) = self._jobs.popitem(last=False)
                     self._active = True
                 else:
                     key, fn = self._low.pop(0)
@@ -250,12 +259,21 @@ class CountWorker(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._generation = 0
+        self.running = False
 
     def start(self, folder: str, rover: str, sols: list[int]) -> None:
         self._generation += 1
         gen = self._generation
 
         def work():
+            self.running = True
+            try:
+                count(gen)
+            finally:
+                if gen == self._generation:
+                    self.running = False
+
+        def count(gen):
             batch, last = {}, time.monotonic()
             for sol in sols:
                 while screen_reads_pending() and gen == self._generation:
@@ -273,6 +291,7 @@ class CountWorker(QObject):
 
     def stop(self) -> None:
         self._generation += 1
+        self.running = False
 
 
 # ---- the thumbnail grid ----------------------------------------------------------------------------------
@@ -596,6 +615,7 @@ class PhotosPage(QWidget):
     NEWEST = "newest"
 
     FAVORITES, FAV_FOLDER, FLIPBOOKS, FLIPBOOK = "favorites", "favfolder", "flipbooks", "flipbook"
+    BROWSE_TABS = ("Sols", "Favorites", "Flipbooks")
 
     def __init__(self, settings, folder: Callable[[], str], save_settings: Callable[[], None], parent=None,
                  favorites: FavoritesStore | None = None):
@@ -606,12 +626,14 @@ class PhotosPage(QWidget):
         self.ask_text: Callable[[str, str, str], str | None] = self._ask_text
         self.confirm: Callable[[str, str], bool] = self._confirm
         self.photo_time: Callable[[PhotoFile], str | None] | None = None      # when a photo was taken, if known
-        self.fav_item: QTreeWidgetItem | None = None
-        self.books_item: QTreeWidgetItem | None = None
+        self.fav_item: QTreeWidgetItem | None = None     # "All Favorite Photos", on the Favorites tab
+        self.browse_tab = "Sols"
         self.flip_book: Flipbook | None = None          # the saved flipbook shown, if any
         self.flip_dirty = False
         self.flip_ctx: tuple[str, int, str] | None = None    # (rover, sol, camera) the flipbook bar is set for
         self.flip_source: list[PhotoFile] = []          # that camera folder's photos
+        self.flip_pending: tuple | None = None          # the camera folder being read for the bar
+        self.play_when_read = False                     # Play was pressed while it was being read
         # Thumbnails wait while a photo list is read: the list decides what's shown, so it gets the disk first.
         self.loader = ImageLoader(threads=3, hold=lambda: getattr(self, "lister", None) is not None
                                   and self.lister.busy())
@@ -644,6 +666,8 @@ class PhotosPage(QWidget):
         self.full_cache: collections.OrderedDict = collections.OrderedDict()      # path -> QPixmap, a few
         self.extra_details: Callable[[PhotoFile], list[tuple[str, str]]] | None = None   # details from elsewhere
         self._build()
+        self._fill_special_items()
+        self.show_browse_tab("Sols", choose=False)
         self.model.is_favorite = lambda p: self.favs.is_favorite(fav_key(p.rover, p.sol, p.camera, p.number))
         self._build_flipbook()
         # F: favorite; P: play or pause the flipbook. Not while typing (a text box takes its own keys).
@@ -684,6 +708,20 @@ class PhotosPage(QWidget):
         self.goto.textEdited.connect(lambda _t: self.goto_timer.start())     # read it ahead while typing
         row.addWidget(self.goto, 1)
         bl.addLayout(row)
+        # Tabs: the sols, Favorites (every rover) and saved Flipbooks, each with its own list
+        tabs = QHBoxLayout()
+        tabs.setSpacing(4)
+        self.browse_buttons: dict[str, QPushButton] = {}
+        for name in self.BROWSE_TABS:
+            b = QPushButton(name)
+            b.setObjectName("browseTab")
+            b.setCheckable(True)
+            b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            b.clicked.connect(lambda _c=False, n=name: self.show_browse_tab(n))
+            tabs.addWidget(b, 1)                       # the three share the card's width
+            self.browse_buttons[name] = b
+        bl.addLayout(tabs)
+        self.browse_stack = QStackedWidget()
         self.tree = QTreeWidget()
         self.tree.setObjectName("solTree")
         self.tree.setColumnCount(2)
@@ -696,11 +734,15 @@ class PhotosPage(QWidget):
         self.tree.header().setSectionResizeMode(1, self.tree.header().ResizeMode.Fixed)
         self._size_count_column()
         self.tree.setUniformRowHeights(True)
-        self.tree.itemExpanded.connect(self._fill_cameras)
+        self.tree.itemExpanded.connect(self._expanded)
         self.tree.currentItemChanged.connect(lambda cur, _prev: self._tree_chosen(cur))
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.tree.customContextMenuRequested.connect(self._show_tree_menu)
-        bl.addWidget(self.tree, 1)
+        self.tree.customContextMenuRequested.connect(lambda pos: self._show_tree_menu(self.tree, pos))
+        self.fav_tree = self._side_list(columns=2)
+        self.books_tree = self._side_list(columns=1)
+        for t in (self.tree, self.fav_tree, self.books_tree):
+            self.browse_stack.addWidget(t)
+        bl.addWidget(self.browse_stack, 1)
         self.browse_note = _label("", "muted", wrap=True)
         bl.addWidget(self.browse_note)
         body.addWidget(browse)
@@ -740,6 +782,8 @@ class PhotosPage(QWidget):
         self.grid.setMouseTracking(True)                  # for the hover background
         self.grid.selectionModel().currentChanged.connect(lambda cur, _prev: self._grid_chosen(cur))
         self.grid.activated.connect(lambda _i: self.open_full())
+        self.grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.grid.customContextMenuRequested.connect(self._show_grid_menu)
         self._apply_grid_size()
         self.empty = _label("", "muted", wrap=True)
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -879,6 +923,8 @@ class PhotosPage(QWidget):
         return self.rover_box.currentText()
 
     def _rover_chosen(self) -> None:
+        if self.browse_tab != "Sols":                  # a rover is chosen to browse its sols
+            self.show_browse_tab("Sols", choose=False)
         self._forget_listing()
         self.expand_sol = None
         self.goto_note = None
@@ -903,22 +949,28 @@ class PhotosPage(QWidget):
         self.tree.blockSignals(True)
         self.tree.clear()
         self.sol_items = {}
-        self._add_special_items()
+        self.newest_item = None
+        if self.newest:
+            self._add_newest_item()
         for sol in sols:
             self.sol_items[sol] = self._make_sol_item(folder, rover, sol)
         self.tree.addTopLevelItems(list(self.sol_items.values()))
-        self.tree.blockSignals(False)
+        # On the Favorites or Flipbooks tab, the sols' choice is kept without showing it
+        self.tree.blockSignals(self.browse_tab != "Sols")
         self._update_browse_note()
         self._count_missing(folder, rover, sols)
-        if keep_view and chosen_key is not None:
-            item = self._find_item(chosen_key)
-            if item is not None:
-                self.tree.setCurrentItem(item)
-                return
-        if not keep_view and sols:                 # the latest sol, where the newest photos are
-            self.tree.setCurrentItem(self.sol_items[sols[-1]])
-            self.tree.scrollToItem(self.sol_items[sols[-1]])
-        elif not sols and rover:
+        try:
+            if keep_view and chosen_key is not None:
+                item = self._find_item(chosen_key)
+                if item is not None:
+                    self.tree.setCurrentItem(item)
+                    return
+            if not keep_view and sols:                 # the latest sol, where the newest photos are
+                self.tree.setCurrentItem(self.sol_items[sols[-1]])
+                self.tree.scrollToItem(self.sol_items[sols[-1]])
+        finally:
+            self.tree.blockSignals(False)
+        if not sols and rover:
             self._set_empty("No sols in this rover's folder yet.")
 
     def _size_count_column(self) -> None:
@@ -927,7 +979,10 @@ class PhotosPage(QWidget):
             return
         self.tree.ensurePolished()                   # the style sheet's font
         fm = self.tree.fontMetrics()
-        self.tree.setColumnWidth(1, max(fm.horizontalAdvance("999,999"), fm.horizontalAdvance("Photos")) + 24)
+        width = max(fm.horizontalAdvance("999,999"), fm.horizontalAdvance("Photos")) + 24
+        self.tree.setColumnWidth(1, width)
+        if hasattr(self, "fav_tree"):
+            self.fav_tree.setColumnWidth(1, width)
 
     def changeEvent(self, event) -> None:
         if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
@@ -958,58 +1013,96 @@ class PhotosPage(QWidget):
         item.setFont(0, f)
         return item
 
-    def _add_special_items(self) -> None:
-        """Favorites and Flipbooks (every rover) at the top, then Newest Downloads once there are any."""
-        self.fav_item = self._top_item("★  Favorites", (self.FAVORITES,),
-                                       "Photos, sols and camera folders you marked, from every rover")
-        self.books_item = self._top_item("Flipbooks", (self.FLIPBOOKS,), "Flipbooks you saved")
-        self.tree.insertTopLevelItem(0, self.fav_item)
-        self.tree.insertTopLevelItem(1, self.books_item)
-        self._fill_special_items()
-        self.newest_item = None
-        if self.newest:
-            self._add_newest_item()
+    def _side_list(self, columns: int) -> QTreeWidget:
+        """The Favorites or Flipbooks tab's list: like the sols' list, without a header."""
+        t = QTreeWidget()
+        t.setObjectName("solTree")
+        t.setColumnCount(columns)
+        t.setHeaderHidden(True)
+        t.setRootIsDecorated(False)
+        t.setUniformRowHeights(True)
+        t.header().setStretchLastSection(False)
+        t.header().setSectionResizeMode(0, t.header().ResizeMode.Stretch)
+        if columns > 1:
+            t.header().setSectionResizeMode(1, t.header().ResizeMode.Fixed)
+        t.currentItemChanged.connect(lambda cur, _prev: self._tree_chosen(cur))
+        t.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        t.customContextMenuRequested.connect(lambda pos, tree=t: self._show_tree_menu(tree, pos))
+        return t
 
     def _fill_special_items(self) -> None:
-        """Favorites' count and folder rows, and the saved flipbooks (after any change to them)."""
-        if self.fav_item is None:
-            return
-        for item in (self.fav_item, self.books_item):
-            for child in item.takeChildren():
-                del child
-        self.fav_item.setText(1, f"{len(self.favs.favorites):,}")
+        """The Favorites tab (All Favorite Photos, then favorite sols and camera folders) and the Flipbooks tab
+        (after any change to them)."""
+        self.fav_tree.clear()
+        self.fav_item = self._top_item("★  All Favorite Photos", (self.FAVORITES,),
+                                       "Your favorite photos, from every rover")
+        self.fav_item.setText(1, f"{len(self.favs.photos()):,}")
+        self.fav_tree.addTopLevelItem(self.fav_item)
         for f in self.favs.folders():               # sols and camera folders: choose one to go there
-            child = QTreeWidgetItem([f.note or f.label(), ""])
-            child.setData(0, Qt.ItemDataRole.UserRole, (self.FAV_FOLDER, f.rover, f.sol, f.camera))
-            child.setToolTip(0, f.label() + (f"\n{f.note}" if f.note else ""))
-            self.fav_item.addChild(child)
-        self.books_item.setText(1, f"{len(self.favs.flipbooks):,}")
+            item = QTreeWidgetItem([f.note or f.label(), ""])
+            item.setData(0, Qt.ItemDataRole.UserRole, (self.FAV_FOLDER, f.rover, f.sol, f.camera))
+            item.setToolTip(0, f.label() + (f"\n{f.note}" if f.note else ""))
+            self.fav_tree.addTopLevelItem(item)
+        self.books_tree.clear()
         for b in self.favs.flipbooks:
-            child = QTreeWidgetItem([b.name, ""])
-            child.setData(0, Qt.ItemDataRole.UserRole, (self.FLIPBOOK, b.id))
-            child.setToolTip(0, f"{b.rover} · Sol {b.sol:,} · {camera_name(b.camera)} · photos {b.first}–{b.last}"
-                                f" · {b.fps:g} photos/s")
-            self.books_item.addChild(child)
+            item = QTreeWidgetItem([b.name])
+            item.setData(0, Qt.ItemDataRole.UserRole, (self.FLIPBOOK, b.id))
+            item.setToolTip(0, f"{b.rover} · Sol {b.sol:,} · {camera_name(b.camera)} · photos {b.first}–{b.last}"
+                               f" · {b.fps:g} photos/s")
+            self.books_tree.addTopLevelItem(item)
+        self._update_browse_note()
 
     def _add_newest_item(self) -> None:
         self.newest_item = self._top_item("Newest Downloads", (self.NEWEST,),
                                           "Photos saved since the app started, newest last, from every rover")
         self.newest_item.setText(1, f"{len(self.newest):,}")
-        self.tree.insertTopLevelItem(2 if self.fav_item is not None else 0, self.newest_item)
+        self.tree.insertTopLevelItem(0, self.newest_item)
+
+    def _tree_of(self, key) -> QTreeWidget:
+        if key and key[0] in (self.FAVORITES, self.FAV_FOLDER):
+            return self.fav_tree
+        if key and key[0] in (self.FLIPBOOKS, self.FLIPBOOK):
+            return self.books_tree
+        return self.tree
+
+    def show_browse_tab(self, name: str, choose: bool = True) -> None:
+        """Sols, Favorites or Flipbooks. choose: show what that tab's list has chosen (Favorites: All Favorite
+        Photos when nothing is), as if it had just been clicked."""
+        self.browse_tab = name
+        for n, b in self.browse_buttons.items():
+            b.setChecked(n == name)
+        tree = {"Sols": self.tree, "Favorites": self.fav_tree, "Flipbooks": self.books_tree}[name]
+        self.browse_stack.setCurrentWidget(tree)
+        self._update_browse_note()
+        if not choose:
+            return
+        cur = tree.currentItem()
+        key = cur.data(0, Qt.ItemDataRole.UserRole) if cur is not None else None
+        if name == "Favorites" and (key is None or key[0] == self.FAV_FOLDER):
+            tree.blockSignals(True)                    # a folder would go to the Sols tab again
+            tree.setCurrentItem(self.fav_item)
+            tree.blockSignals(False)
+            cur = self.fav_item
+        if cur is not None:
+            self._tree_chosen(cur)
+        elif name == "Flipbooks":
+            self._pause_flipbook(select=False)
+            self._show_message((self.FLIPBOOKS,), "Flipbooks",
+                               "Saved flipbooks are listed here. To make one, open a photo at full size, choose From "
+                               "and To below it, and click Save Flipbook…" if not self.favs.flipbooks else
+                               "Choose a flipbook to play it.")
 
     def _find_item(self, key) -> QTreeWidgetItem | None:
         if key[0] == self.NEWEST:
             return self.newest_item
         if key[0] == self.FAVORITES:
             return self.fav_item
-        if key[0] == self.FLIPBOOKS:
-            return self.books_item
         if key[0] in (self.FAV_FOLDER, self.FLIPBOOK):
-            parent = self.fav_item if key[0] == self.FAV_FOLDER else self.books_item
-            if parent is None:
-                return None
-            return next((parent.child(i) for i in range(parent.childCount())
-                         if parent.child(i).data(0, Qt.ItemDataRole.UserRole) == key), parent)
+            tree = self._tree_of(key)
+            return next((tree.topLevelItem(i) for i in range(tree.topLevelItemCount())
+                         if tree.topLevelItem(i).data(0, Qt.ItemDataRole.UserRole) == key), None)
+        if key[0] == self.FLIPBOOKS:
+            return None
         item = self.sol_items.get(key[1])
         if item is None or key[0] == "sol":
             return item
@@ -1035,6 +1128,15 @@ class PhotosPage(QWidget):
         self._update_browse_note()
 
     def _update_browse_note(self) -> None:
+        if not hasattr(self, "browse_note"):
+            return
+        if self.browse_tab == "Favorites":
+            self.browse_note.setText(f"{count_text(len(self.favs.photos()), 'favorite photo')} · "
+                                     f"{count_text(len(self.favs.folders()), 'favorite folder')}")
+            return
+        if self.browse_tab == "Flipbooks":
+            self.browse_note.setText(count_text(len(self.favs.flipbooks), "saved flipbook"))
+            return
         folder, rover = self.loaded_folder or "", self._rover()
         if self.goto_note and rover:
             self.browse_note.setText(self.goto_note)
@@ -1051,7 +1153,36 @@ class PhotosPage(QWidget):
             text += f" · counting photos ({len(known):,} of {len(sols):,} sols)"
         self.browse_note.setText(text)
 
+    def _expanded(self, item: QTreeWidgetItem) -> None:
+        """A sol opened with its arrow: its cameras, from the photo list in memory or read in the background (on
+        a hard disk, reading them here kept the window waiting)."""
+        key = item.data(0, Qt.ItemDataRole.UserRole)
+        if not key or key[0] != "sol" or item.childCount():
+            return
+        folder, rover = self.loaded_folder or "", self._rover()
+        list_key = (folder, rover, ("sol", key[1]))
+        cached = self.list_cache.get(list_key)
+        if cached is not None:
+            self._cameras_from_list(list_key, cached)
+            return
+        self.lister.request_call(("expand", list_key), functools.partial(photos_in, folder, rover, key[1], None))
+
+    def _cameras_from_list(self, list_key, photos: list[PhotoFile]) -> None:
+        """A sol's camera rows and photo count, from its photo list."""
+        folder, rover, key = list_key
+        sol = key[1]
+        item = self.sol_items.get(sol)
+        if key[0] != "sol" or item is None:
+            return
+        if not item.childCount():
+            self._add_cameras(item, sorted(collections.Counter(p.camera for p in photos).items()))
+        self.counts[(folder, rover, sol)] = len(photos)
+        item.setText(1, f"{len(photos):,}")
+        self._update_browse_note()
+
     def _fill_cameras(self, item: QTreeWidgetItem) -> None:
+        """The sol's camera rows, read here and now (for going straight to a camera; opening a sol with its arrow
+        reads them in the background)."""
         key = item.data(0, Qt.ItemDataRole.UserRole)
         if not key or key[0] != "sol" or item.childCount():
             return
@@ -1082,6 +1213,8 @@ class PhotosPage(QWidget):
         sols = sorted(self.sol_items)
         best = min(sols, key=lambda s: (abs(s - want), s))       # the sol itself, or the nearest one
         item = self.sol_items[best]
+        if self.browse_tab != "Sols":
+            self.show_browse_tab("Sols", choose=False)
         self.expand_sol = None
         if item.childCount():
             item.setExpanded(True)
@@ -1178,6 +1311,9 @@ class PhotosPage(QWidget):
         kind, list_key = job
         if list_key[0] != (self.loaded_folder or ""):
             return                                     # another photo folder by now
+        if kind == "flipsrc":                          # the flipbook bar's camera folder (any rover)
+            self._flip_source_arrived(list_key, photos)
+            return
         if kind in ("favorites", "flipbook"):          # from every rover
             if list_key == self.list_key:
                 if kind == "favorites":
@@ -1190,6 +1326,8 @@ class PhotosPage(QWidget):
         self._remember_list(list_key, photos)
         if kind == "ahead":
             self.model.read_ahead(photos[:self._first_screen()])
+        elif kind == "expand":                         # a sol opened with its arrow
+            self._cameras_from_list(list_key, photos)
         elif kind == "check":                          # shown from memory: did the folder change since?
             if (self.list_key is None and self.view_key == list_key[2]
                     and [p.path for p in photos] != [p.path for p in self.model.photos]):
@@ -1252,13 +1390,7 @@ class PhotosPage(QWidget):
         folder, rover, key = list_key
         sol = key[1]
         item = self.sol_items.get(sol)
-        if key[0] == "sol" and item is not None:      # the sol's cameras and count, from the same list
-            cams = collections.Counter(p.camera for p in photos)
-            if not item.childCount():
-                self._add_cameras(item, sorted(cams.items()))
-            self.counts[(folder, rover, sol)] = len(photos)
-            item.setText(1, f"{len(photos):,}")
-            self._update_browse_note()
+        self._cameras_from_list(list_key, photos)     # the sol's cameras and count, from the same list
         if self.expand_sol == sol and item is not None:
             self.expand_sol = None
             item.setExpanded(True)
@@ -1317,13 +1449,18 @@ class PhotosPage(QWidget):
         if item is None:
             self._show_message((self.FAVORITES,), "Favorites", f"Sol {sol:,} isn't in this photo folder.")
             return
+        if self.browse_tab != "Sols":
+            self.show_browse_tab("Sols", choose=False)
         if camera:
             self._fill_cameras(item)
             item.setExpanded(True)
             item = self._find_item(("camera", sol, camera))
         else:
             item.setExpanded(True)
-        self.tree.setCurrentItem(item)
+        if self.tree.currentItem() is item:            # chosen already (before Favorites): show it again
+            self._tree_chosen(item)
+        else:
+            self.tree.setCurrentItem(item)
         self.tree.scrollToItem(item)
 
     def _key_of(self, p: PhotoFile):
@@ -1364,15 +1501,18 @@ class PhotosPage(QWidget):
 
     def _refresh_special(self) -> None:
         """Favorites' and Flipbooks' rows changed: rebuild them, keeping what's chosen (without choosing again)."""
-        cur = self.tree.currentItem()
-        key = cur.data(0, Qt.ItemDataRole.UserRole) if cur is not None else None
-        self.tree.blockSignals(True)
+        keys = {}
+        for t in (self.fav_tree, self.books_tree):
+            cur = t.currentItem()
+            keys[t] = cur.data(0, Qt.ItemDataRole.UserRole) if cur is not None else None
+            t.blockSignals(True)
         self._fill_special_items()
-        if key is not None:
-            item = self._find_item(key)
-            if item is not None:
-                self.tree.setCurrentItem(item)
-        self.tree.blockSignals(False)
+        for t, key in keys.items():
+            if key is not None:
+                item = self._find_item(key)
+                if item is not None:
+                    t.setCurrentItem(item)
+            t.blockSignals(False)
 
     def _tree_menu(self, item: QTreeWidgetItem | None) -> QMenu | None:
         """Right-click: add a sol or camera folder to Favorites; edit or remove a favorite; rename or delete a
@@ -1400,8 +1540,30 @@ class PhotosPage(QWidget):
             return None
         return menu
 
-    def _show_tree_menu(self, pos) -> None:
-        menu = self._tree_menu(self.tree.itemAt(pos))
+    def _grid_menu(self, index) -> QMenu | None:
+        """Right-click on a photo: it becomes the chosen photo, and the menu has what the details card offers."""
+        if not index.isValid():
+            return None
+        if self.grid.currentIndex() != index:
+            self.grid.setCurrentIndex(index)
+        p = self.current
+        if p is None:
+            return None
+        menu = QMenu(self)
+        fav = self.favs.is_favorite(self._key_of(p))
+        menu.addAction("★  Remove from Favorites" if fav else "☆  Add to Favorites", self.toggle_favorite)
+        menu.addSeparator()
+        menu.addAction("View Full Size", self.open_full)
+        menu.addAction("Show in Folder", lambda: show_in_folder(p.path))
+        return menu
+
+    def _show_grid_menu(self, pos) -> None:
+        menu = self._grid_menu(self.grid.indexAt(pos))
+        if menu is not None:
+            menu.exec(self.grid.viewport().mapToGlobal(pos))
+
+    def _show_tree_menu(self, tree: QTreeWidget, pos) -> None:
+        menu = self._tree_menu(tree.itemAt(pos))
         if menu is not None:
             menu.exec(self.tree.viewport().mapToGlobal(pos))
 
@@ -1454,8 +1616,8 @@ class PhotosPage(QWidget):
         ratio = self.viewer.devicePixelRatioF()
         return max(640, int(max(self.viewer.width(), self.viewer.height()) * ratio))
 
-    def _camera_photos(self, p: PhotoFile) -> list[PhotoFile]:
-        """All photos of p's camera folder, from memory where possible."""
+    def _camera_photos(self, p: PhotoFile) -> list[PhotoFile] | None:
+        """All photos of p's camera folder, if they're in memory (None: they have to be read)."""
         folder = self.loaded_folder or ""
         cached = self.list_cache.get((folder, p.rover, ("camera", p.sol, p.camera)))
         if cached is not None:
@@ -1463,10 +1625,11 @@ class PhotosPage(QWidget):
         if (p.rover == self._rover() and self.view_key and self.view_key[0] in ("sol", "camera")
                 and self.view_key[1] == p.sol):
             return [x for x in self.model.photos if x.camera == p.camera]
-        return photos_in(folder, p.rover, p.sol, p.camera)
+        return None
 
     def _sync_flip_ctx(self, p: PhotoFile) -> None:
-        """The bar follows the photo's camera folder: From and To start as its first and last photo."""
+        """The bar follows the photo's camera folder: From and To start as its first and last photo. A folder
+        that isn't in memory is read in the background."""
         ctx = (p.rover, p.sol, p.camera)
         if ctx == self.flip_ctx:
             return
@@ -1474,12 +1637,37 @@ class PhotosPage(QWidget):
             self.flip_book = None
             self.flip_bar.set_book(None, dirty=False)
         self.flip_ctx = ctx
-        self.flip_source = self._camera_photos(p)
-        nums = [x.number for x in self.flip_source]
+        source = self._camera_photos(p)
+        if source is None:
+            self.flip_source = []
+            self.flip_pending = ctx
+            self.flip_bar.from_edit.setText("")
+            self.flip_bar.to_edit.setText("")
+            self.flip_bar.status.setText("Reading the camera folder…")
+            folder = self.loaded_folder or ""
+            self.lister.request_call(("flipsrc", (folder, p.rover, ("camera", p.sol, p.camera))),
+                                     functools.partial(photos_in, folder, p.rover, p.sol, p.camera))
+            return
+        self._set_flip_source(source)
+
+    def _set_flip_source(self, source: list[PhotoFile]) -> None:
+        self.flip_pending = None
+        self.flip_source = source
+        nums = [x.number for x in source]
         bar = self.flip_bar
         bar.from_edit.setText(str(min(nums)) if nums else "")
         bar.to_edit.setText(str(max(nums)) if nums else "")
-        bar.status.setText(f"{camera_name(p.camera)} · {count_text(len(nums), 'photo')}" if nums else "")
+        cam = self.flip_ctx[2] if self.flip_ctx else ""
+        bar.status.setText(f"{camera_name(cam)} · {count_text(len(nums), 'photo')}" if nums else "")
+
+    def _flip_source_arrived(self, list_key, photos: list[PhotoFile]) -> None:
+        _folder, rover, key = list_key
+        self._remember_list(list_key, photos)
+        if self.flip_pending == (rover, key[1], key[2]) and self.flip_ctx == self.flip_pending:
+            self._set_flip_source(photos)
+            if self.play_when_read:
+                self.play_when_read = False
+                self._play()
 
     def _bounds(self) -> tuple[int, int]:
         nums = [x.number for x in self.flip_source] or [0]
@@ -1516,6 +1704,9 @@ class PhotosPage(QWidget):
         if p is None:
             return
         self._sync_flip_ctx(p)
+        if self.flip_pending is not None:              # its camera folder is still being read: play after
+            self.play_when_read = True
+            return
         frames = self._frames()
         if not frames:
             self.flip_bar.status.setText("No photos between From and To")
@@ -1542,6 +1733,7 @@ class PhotosPage(QWidget):
         if not hasattr(self, "player"):
             return
         was = self.player.playing or finished
+        self.play_when_read = False
         self.player.pause()
         self.flip_bar.set_playing(False)
         p = self.player.shown()
@@ -1591,7 +1783,7 @@ class PhotosPage(QWidget):
         p = self.current or self.player.shown()
         if self.flip_ctx is None and p is not None:
             self._sync_flip_ctx(p)
-        if self.flip_ctx is None:
+        if self.flip_ctx is None or self.flip_pending is not None:     # not yet: its folder is being read
             return
         first, last = self._bounds()
         bar = self.flip_bar
@@ -1633,7 +1825,7 @@ class PhotosPage(QWidget):
         b = self.flip_book
         if b is None or list_key[2] != (self.FLIPBOOK, b.id):
             return
-        self.flip_ctx, self.flip_source = (b.rover, b.sol, b.camera), source
+        self.flip_ctx, self.flip_source, self.flip_pending = (b.rover, b.sol, b.camera), source, None
         bar = self.flip_bar
         for w in (bar.speed, bar.loop_box, bar.same_box):
             w.blockSignals(True)
@@ -1707,7 +1899,9 @@ class PhotosPage(QWidget):
         self.tree.blockSignals(True)
         self.tree.clear()
         self.sol_items = {}
-        self._add_special_items()
+        self.newest_item = None
+        if self.newest:
+            self._add_newest_item()
         self.tree.blockSignals(False)
         self.view_key = None
         self.grid_title.setText("")
@@ -1757,10 +1951,13 @@ class PhotosPage(QWidget):
         rows += extra
         # Read with the thumbnail or preview, on a background thread (opening the file here waited for the disk).
         rows.append(("Image Size", self.image_sizes.get(p.path, "…")))
-        try:
-            rows.append(("File Size", fmt_file_size(os.path.getsize(p.path))))
-        except OSError:
-            rows.append(("File Size", "File not found"))
+        size = p.size
+        if size is None:              # a photo just saved by a download (its folder entry is fresh in memory)
+            try:
+                size = os.path.getsize(p.path)
+            except OSError:
+                size = None
+        rows.append(("File Size", fmt_file_size(size) if size is not None else "File not found"))
         rows.append(("File", p.name))         # its folder is the rover, sol and camera above (full path: tooltip)
         return rows
 
@@ -1968,6 +2165,8 @@ class PhotosPage(QWidget):
 
     def show_photo(self, p: PhotoFile) -> None:
         """Show one photo in Newest Downloads (it's there if a download saved it), else in its camera folder."""
+        if self.browse_tab != "Sols":
+            self.show_browse_tab("Sols", choose=False)
         if p in self.newest and self.newest_item is not None:
             self.tree.setCurrentItem(self.newest_item)
         else:
