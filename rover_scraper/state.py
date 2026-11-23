@@ -19,7 +19,8 @@ PERMANENT_STATUSES = {403, 404, 410}
 # it opens any file: on Windows the registry under the current user (HKCU\Software\RoverImageScraper, value
 # DataFolder); on Linux and macOS a one-line file, ~/.config/RoverImageScraper/data_folder.
 
-APP_DATA_FILES = ("settings.json", "scans.json", "requests.json", "unavailable.json", "photo_details.db")
+APP_DATA_FILES = ("settings.json", "scans.json", "requests.json", "unavailable.json", "photo_details.db",
+                  "favorites.json")
 _REG_KEY, _REG_VALUE = r"Software\RoverImageScraper", "DataFolder"
 
 

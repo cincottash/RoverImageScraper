@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBo
 
 from api import SUPPORTED_ROVERS, ApiError, Cancelled, MarsVistaClient, load_api_key, save_api_key
 from photo_library import camera_name, rovers_in, sols_in
+from favorites import FAVORITES_FILE, FavoritesStore, parse_favorites_list
 from photo_page import PhotosPage
 from pds import PdsClient, RequestCounter, RoverSources, is_pds_rover, latest_sol
 from download import NASA_STATUS, make_session
@@ -691,7 +692,8 @@ class SetupDialog(QDialog):
         self.copy_box = QCheckBox("Copy Existing App Data")
         self.copy_box.setChecked(True)
         self.copy_box.setToolTip("Copies settings, scan results, request counts, the list of photos unavailable "
-                                 "at NASA and the photo details. The originals are left where they are.")
+                                 "at NASA, the photo details, and your favorites and flipbooks. The originals are "
+                                 "left where they are.")
         self.copy_box.setVisible(has_old)
         lay.addWidget(self.copy_box)
         self.copy_from = label(f"From {self.old_dir}", "muted", wrap=True)     # the path, below its check box
@@ -819,6 +821,14 @@ def choose_folder(parent, title: str, start: str) -> str:
     return QFileDialog.getExistingDirectory(parent, title, start, options)
 
 
+def choose_file(parent, title: str, start: str, filters: str) -> str:
+    """A file picker; like choose_folder, Qt's own while the window is see-through."""
+    f = QApplication.instance().findChild(PopupOpacity, "popupOpacity")
+    see_through = f is not None and f.level < 0.995
+    options = QFileDialog.Option.DontUseNativeDialog if see_through else QFileDialog.Option(0)
+    return QFileDialog.getOpenFileName(parent, title, start, filters, "", options)[0]
+
+
 class PopupOpacity(QObject):
     """Gives every window of the app the main window's opacity as it's created and as it opens."""
 
@@ -890,6 +900,8 @@ class MainWindow(QMainWindow):
         avail = app.primaryScreen().availableGeometry() if app.primaryScreen() else None
         self.resize(min(1200, avail.width() - 40) if avail else 1200,
                     min(1000, avail.height() - 60) if avail else 900)
+        # Favorites and saved flipbooks, in the app data folder (the Photos page shows and changes them)
+        self.favorites = FavoritesStore(os.path.join(STATE_DIR, FAVORITES_FILE))
         self._build()
         self.popup_opacity = PopupOpacity.for_app(app)
         # Photo details: kept in the app data folder; sols without them are looked up when the Photos page shows
@@ -900,6 +912,7 @@ class MainWindow(QMainWindow):
                                   self)
         self.lookups.finished.connect(self._lookup_finished)
         self.photos_page.extra_details = self._photo_extra_details
+        self.photos_page.photo_time = self._photo_time
         self._build_menus()
         self._load_settings_into_widgets()
         self._refresh_library()
@@ -954,7 +967,7 @@ class MainWindow(QMainWindow):
         body.setSpacing(16)
         self.pages.addWidget(download_page)
         self.download_page = download_page
-        self.photos_page = PhotosPage(self.settings, self._folder, self._save_settings)
+        self.photos_page = PhotosPage(self.settings, self._folder, self._save_settings, favorites=self.favorites)
         self.pages.addWidget(self.photos_page)
         self.pages.setCurrentWidget(download_page)          # a stacked widget shows its first page otherwise
         self.page_buttons["Download"].setChecked(True)
@@ -1735,6 +1748,10 @@ class MainWindow(QMainWindow):
         open_act = file_m.addAction("Open Photo Folder")
         open_act.triggered.connect(self._open_folder)
         file_m.addSeparator()
+        import_act = file_m.addAction("Import Favorites…")
+        import_act.setToolTip("Add favorites from a text list: one Rover/sol/CAMERA/number per line, then a note")
+        import_act.triggered.connect(self._import_favorites)
+        file_m.addSeparator()
         settings_m = file_m.addMenu("&Settings")          # File > Settings (filled in below)
         file_m.addSeparator()
         quit_act = file_m.addAction("Quit")
@@ -1896,6 +1913,45 @@ class MainWindow(QMainWindow):
                                      "opened again.")]
         self.lookups.request(folder, p.rover, p.sol)
         return [("More Details", "Looking up…")]
+
+    def _photo_time(self, p) -> str | None:
+        """When a photo was taken (ISO, UTC), if its details were looked up: flipbooks play in that order."""
+        folder = self.photos_page.loaded_folder or self._folder()
+        info, _link = self.details.file_photo(folder, p.rover, p.sol, p.camera, p.number)
+        return info.taken_utc[:19] if info is not None and info.taken_utc else None
+
+    def _import_favorites(self) -> None:
+        """File > Import Favorites…: a text list (like a notes file of favorite photos) into Favorites."""
+        path = choose_file(self, "Import Favorites", os.path.expanduser("~"), "All files (*)")
+        if path:
+            self._import_favorites_from(path)
+
+    def _import_favorites_from(self, path: str, ask: bool = True) -> tuple[int, int, list[str]]:
+        """Returns (added, already favorites, lines not understood). The list file is only read."""
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                favs, problems = parse_favorites_list(f.read())
+        except OSError as e:
+            QMessageBox.warning(self, "Import Favorites", f"Couldn't read {path}:\n{e}")
+            return 0, 0, []
+        new = [f for f in favs if not self.favorites.is_favorite(f.key)]
+        shown = "\n".join(f"  {p}" for p in problems[:12]) + ("\n  …" if len(problems) > 12 else "")
+        text = (f"{count(len(new), 'favorite')} to add"
+                + (f" ({len(favs) - len(new):,} already in Favorites)" if len(favs) > len(new) else "") + ".")
+        if problems:
+            text += f"\n\n{count(len(problems), 'line')} not understood, so left out:\n{shown}"
+        if ask:
+            if not new:
+                QMessageBox.information(self, "Import Favorites", text)
+                return 0, len(favs), problems
+            if QMessageBox.question(self, "Import Favorites", text + "\n\nAdd them?") != \
+                    QMessageBox.StandardButton.Yes:
+                return 0, len(favs) - len(new), problems
+        for f in new:
+            self.favorites.add(f.rover, f.sol, f.camera, f.number, note=f.note)
+        self.photos_page._refresh_special()
+        self._log(f"Imported {count(len(new), 'favorite')} from {os.path.basename(path)}")
+        return len(new), len(favs) - len(new), problems
 
     def _lookup_finished(self, rover: str, sol: int, error: str) -> None:
         if self.lookups.cancel.is_set():           # the window is closing; the details file may be closed
