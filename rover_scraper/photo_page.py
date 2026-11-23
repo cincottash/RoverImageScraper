@@ -642,7 +642,10 @@ def _label(text: str = "", name: str | None = None, wrap: bool = False) -> QLabe
 
 class PhotosPage(QWidget):
     """settings: the app's Settings (photo_thumb_size is read and changed); folder(): the photo folder;
-    save_settings(): saves them."""
+    save_settings(): saves them. play_state_changed: the flipbook started or stopped, or the chosen photo changed
+    (for the window's own Play button)."""
+
+    play_state_changed = Signal()
 
     NEWEST = "newest"
 
@@ -1856,6 +1859,7 @@ class PhotosPage(QWidget):
         self.player.finished.connect(lambda: self._pause_flipbook(select=True, finished=True))
         bar = self.flip_bar
         bar.play_btn.clicked.connect(self._play_key)
+        bar.playing_changed.connect(lambda _playing: self.play_state_changed.emit())
         bar.speed.valueChanged.connect(self._flip_speed)
         bar.loop_box.toggled.connect(self._flip_options)
         bar.same_box.toggled.connect(self._flip_options)
@@ -1954,6 +1958,10 @@ class PhotosPage(QWidget):
             return list(self.flip_frames)
         frames = self._in_time_order(self.play_set or self.flip_source)
         return frames[::-1] if self.flip_reverse else frames
+
+    def play_or_pause(self) -> None:
+        """The window's Play button (bottom right): the same as the flipbook bar's Play."""
+        self._play_key()
 
     def _play_key(self) -> None:
         """P, or Play: play the flipbook from the photo shown (opening the full-size view), or pause it."""
@@ -2385,6 +2393,7 @@ class PhotosPage(QWidget):
         self.full_btn.setEnabled(has)
         self.folder_btn.setEnabled(has)
         self._update_fav_controls()
+        self.play_state_changed.emit()
         if not has:
             self.preview.setPixmap(QPixmap())
             self.preview.setText("")

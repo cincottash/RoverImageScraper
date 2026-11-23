@@ -920,6 +920,8 @@ class MainWindow(QMainWindow):
         self.photos_page.extra_details = self._photo_extra_details
         self.photos_page.photo_time = self._photo_time
         self.photos_page.details_action = self._photo_details_action
+        self.play_btn.clicked.connect(self.photos_page.play_or_pause)
+        self.photos_page.play_state_changed.connect(self._update_play_button)
         self.looked_up_again: set = set()               # sols looked up again from the details panel
         self._build_menus()
         self._load_settings_into_widgets()
@@ -1055,6 +1057,12 @@ class MainWindow(QMainWindow):
         self.start_btn.setMinimumWidth(130)
         self.start_btn.clicked.connect(self._start_download)
         bl.addWidget(self.start_btn)
+        # On the Photos page the main button plays the flipbook (Start and Preview belong to the Download page)
+        self.play_btn = QPushButton("▶  Play")
+        self.play_btn.setObjectName("primary")
+        self.play_btn.setMinimumWidth(130)
+        self.play_btn.setVisible(False)
+        bl.addWidget(self.play_btn)
         outer.addWidget(bottom)
 
     def _build_folder_card(self) -> None:
@@ -1584,6 +1592,39 @@ class MainWindow(QMainWindow):
             w.setEnabled(idle)
         if hasattr(self, "act_choose"):
             self.act_choose.setEnabled(idle)
+        if hasattr(self, "play_btn"):
+            self._update_bottom_bar()
+
+    TASK_NAMES = {"download": "Download", "scan": "Scan", "full": "Full Check", "preview": "Preview",
+                  "details": "Details Lookup"}
+
+    def _update_bottom_bar(self) -> None:
+        """The bottom bar follows the page: the Download page's Preview, Start, Pause and Stop, or on the Photos
+        page the flipbook's Play, with Pause and Stop only while a task runs (named for it, so they can't be
+        taken for the flipbook's)."""
+        on_photos = self.pages.currentWidget() is self.photos_page
+        idle = self.mode == "idle"
+        for w in (self.preview_btn, self.start_btn):
+            w.setVisible(not on_photos)
+        self.start_hint.setVisible(not on_photos and bool(self.start_hint.text()))
+        self.play_btn.setVisible(on_photos)
+        self.pause_btn.setVisible(not on_photos or self.mode == "download")
+        self.stop_btn.setVisible(not on_photos or not idle)
+        task = self.TASK_NAMES.get(self.mode, "")
+        self.pause_btn.setText("Pause Download" if on_photos else "Pause")
+        self.stop_btn.setText(f"Stop {task}" if on_photos and task else "Stop")
+        if on_photos:
+            self._update_play_button()
+
+    def _update_play_button(self) -> None:
+        pp = self.photos_page
+        playing = pp.player.playing
+        self.play_btn.setText("❚❚  Pause" if playing else "▶  Play")
+        self.play_btn.setEnabled(playing or pp.current is not None)
+        self.play_btn.setToolTip("Pause the flipbook (P)" if playing else
+                                 "Play as a flipbook (P): the photos you selected, the flipbook shown, or this "
+                                 "photo's whole camera folder" if pp.current is not None else
+                                 "Choose a photo, or select several, to play them as a flipbook")
 
     def _set_mode(self, mode: str) -> None:
         self.mode = mode
@@ -1877,6 +1918,7 @@ class MainWindow(QMainWindow):
         for n, act in self.page_actions.items():
             act.setChecked(n == name)
         self._update_page_status()
+        self._update_bottom_bar()
         if name == "Photos":
             self.lookups.failed.clear()          # look-ups that failed are tried again
             self.photos_page.setFocus()
@@ -2132,8 +2174,9 @@ class MainWindow(QMainWindow):
     def _sync_button_actions(self) -> None:
         """Download menu items follow their buttons (enabled state, and Start/Resume wording)."""
         self.act_details.setEnabled(self.mode == "idle" and bool(self._folder()))
+        bar = (self.preview_btn, self.start_btn, self.pause_btn, self.stop_btn)   # hidden on the Photos page only
         for act, button in self.button_actions:
-            act.setEnabled(button.isEnabled() and button.isVisible())
+            act.setEnabled(button.isEnabled() and (button.isVisible() or button in bar))
             act.setText(button.text().replace("▶", "").strip())
 
     def _choice_menu(self, parent, title: str, options: list, attr: str, after=None) -> QMenu:

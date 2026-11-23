@@ -195,6 +195,8 @@ class FlipbookPlayer(QObject):
 class FlipbookBar(QWidget):
     """The flipbook's controls under the full-size view. The page connects them to the player."""
 
+    playing_changed = Signal(bool)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("flipbookBar")
@@ -265,6 +267,7 @@ class FlipbookBar(QWidget):
 
     def set_playing(self, playing: bool) -> None:
         self.play_btn.setText("❚❚  Pause" if playing else "▶  Play")
+        self.playing_changed.emit(playing)
 
     def set_book(self, name: str | None) -> None:
         """name: the saved flipbook shown (its changes are saved as they're made); None: photos not saved yet."""
