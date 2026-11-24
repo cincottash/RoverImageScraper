@@ -2265,8 +2265,8 @@ class MainWindow(QMainWindow):
     def _reset_view(self) -> None:
         answer = QMessageBox.question(
             self, "Reset View Options?",
-            "Put data and speed units, speed averaging, theme, the activity log, folded cards, window opacity and "
-            "the thumbnail size back to their defaults?")
+            "Put data and speed units, speed averaging, theme, the activity log, folded cards, window opacity, "
+            "the thumbnail size and the order of the sols list back to their defaults?")
         if answer != QMessageBox.StandardButton.Yes:
             return
         defaults = Settings()

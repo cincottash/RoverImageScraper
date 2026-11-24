@@ -3,7 +3,8 @@
 Downloads the raw photos taken by NASA's four Mars rovers (**Curiosity**, **Perseverance**, **Spirit** and
 **Opportunity**) into a tidy folder on your computer. Run it again later and it fetches only what's new or still
 missing, so it can keep a growing collection up to date. Its **Photos** page browses what you've downloaded, with
-when and where each photo was taken.
+when and where each photo was taken. It keeps your favorite photos, and plays photos taken a moment apart as a
+**flipbook**, like a film.
 
 ![The Rover Image Scraper window in its default dark theme, after a download: the Download and Photos tabs at the top; the photo folder, API key, rovers and options on the left; library status, progress with the latest photo, Mars Vista usage and the activity log on the right](.github/screenshot.png)
 
@@ -124,12 +125,18 @@ The **Photos** tab (or *Ctrl+2*) browses the photo folder without a file manager
 - **Thumbnails:** *Thumbnail Size* makes them bigger or smaller. Arrow keys move between photos.
 - **Choosing several photos**, as in File Explorer: *Ctrl*+click adds or removes one, *Shift*+click chooses a run,
   dragging draws a rectangle around photos, *Ctrl+A* chooses all. Right-click a photo (or the chosen photos) to add
-  them to Favorites or to a flipbook, *View Full Size* or *Show in Folder*.
+  them to Favorites or to a flipbook, copy them (to paste into a flipbook), *View Full Size* or *Show in Folder*.
+
+  <img src=".github/readme/photos_select.png" width="520" alt="Seven photos chosen with Shift+click, and the right-click menu: Add 7 Photos to Favorites, Add 7 Photos to Flipbook (open, with New Flipbook… and a saved flipbook), Copy, View Full Size and Show in Folder">
+
 - **Details:** the chosen photo's preview, rover, sol, camera, size and file, and the details looked up online
   (below). *Show in Folder* opens it in your file manager.
 - **Full size:** *View Full Size*, a click on the preview, or a double-click on a thumbnail. The mouse wheel zooms,
   dragging moves the photo, and a double-click switches between *Fit* and *Actual Size*. *Previous* and *Next*
   (or the arrow keys) step through the camera's photos; *Esc* goes back.
+- **The bottom bar** on this page has **Play** for the flipbook (below) instead of the download's *Preview* and
+  *Start*. While a download or look-up runs, its *Pause Download* and *Stop* buttons stay there too, next to what
+  it's doing.
 
 ![A photo at full size, with Previous, Next, Fit, Actual Size and Favorite above it, and the flipbook bar below it: Play, Speed, Loop, Skip Odd Sizes, Reverse and Save Flipbook](.github/readme/photo_full.png)
 
@@ -164,8 +171,9 @@ photo NASA still lists; those keep the details of their sol as a whole.
 ![The Favorites tab: All Favorite Photos and two favorite folders in the list, and five starred photos with their notes as captions](.github/readme/favorites.png)
 
 - **A photo, or several:** *Add to Favorites* in the details or when you right-click, *Favorite* at full size, or
-  the **F** key. With several photos chosen, these add all of them (or take them all out). Favorites get a star on their thumbnail and a *Note* box in the details; the note becomes the thumbnail's
-  caption in *All Favorite Photos*.
+  the **F** key. With several photos chosen, these add all of them (or take them all out). Favorites get a star
+  on their thumbnail and a *Note* box in the details; the note becomes the thumbnail's caption in *All Favorite
+  Photos*.
 - **A sol or camera folder:** right-click it in the *Sols* list. Favorite folders are listed in the *Favorites* tab;
   choosing one goes there. Right-click one to edit its note or remove it.
 - The **Favorites** tab's *All Favorite Photos* shows the favorite photos of every rover.
@@ -182,7 +190,8 @@ Photos taken a moment apart play like a film: a landing, the arm moving, the sky
 
 1. **Choose what to play:** select several photos in the grid (*Shift*+click a run), or just one photo to play its
    whole camera folder. Open them at full size.
-2. Click **Play** (or press **P**). A selection plays from its first photo, a camera folder from the photo shown.
+2. Click **Play** under the photo or at the bottom right (or press **P**). A selection plays from its first photo,
+   a camera folder from the photo shown.
    **Speed** is 1–30 photos a second; **Loop** starts again after the last photo; **Reverse** plays backwards.
    **Skip Odd Sizes** skips photos that aren't the size of the first one: NASA's folders often mix small
    thumbnails and cut-out parts in with the full photos, which makes the film jump. Photos play in the order they
@@ -198,7 +207,28 @@ frame offers *Duplicate*, *Move Earlier*, *Move Later*, *Reverse All Frames* and
 flipbook, its speed and options included, are saved as you make them; *Save as New…* keeps a copy. Right-click a
 flipbook in the list to rename or delete it.
 
+![A saved flipbook's frames in the Flipbooks tab, three of them chosen, and the right-click menu for frames: Remove 3 Frames from Flipbook, Duplicate, Copy, Paste After, Move Earlier, Move Later, Reverse All Frames and Play From Here](.github/readme/flipbook_edit.png)
+
 Frames are read a little ahead of the one shown; on a slow disk the flipbook pauses rather than skipping photos.
+
+<details>
+<summary><b>Keyboard shortcuts on the Photos page</b></summary>
+
+| Key | In the thumbnails | At full size |
+|---|---|---|
+| Arrow keys | Move between photos | Previous or next photo (also *Page Up*, *Page Down* and *Space*) |
+| *Home*, *End* | First or last photo | First or last photo |
+| *Enter*, or a double-click | View full size | A double-click switches between *Fit* and *Actual Size* |
+| *Esc* | | Back to the thumbnails |
+| **F** | Add to Favorites, or remove | Add to Favorites, or remove |
+| **P** | Play as a flipbook, or pause | Play, or pause |
+| *Ctrl+A* | Choose all photos | |
+| *Ctrl+C* | Copy the chosen photos or frames | |
+| *Ctrl+V* | Paste after the chosen frame (in a flipbook) | |
+| *Delete* | Take the chosen frames out of a flipbook (never deletes photos) | |
+| *Ctrl+1*, *Ctrl+2* | The Download or Photos page | The Download or Photos page |
+
+</details>
 
 ## Menus
 
@@ -234,14 +264,16 @@ folder picker instead of the system's, because the system's can't be see-through
 - **Download:** Start, Pause, Stop, Quick Scan, Full Check… and Preview (the same as the buttons), *Get Details
   for Downloaded Photos…* (see [Photos](#photos)), and *Retry Photos Unavailable at NASA (Next Run)*, which tries
   all photos NASA wouldn't send again on the next run.
-- **View:** Download Page (Ctrl+1), Photos Page (Ctrl+2), Theme, **Units** (Data: Auto, KB, MB, GB or TB; Speed: Auto, KB/s, MB/s or Mbit/s; Speed Averaged
-  Over: 5, 10, 30 or 60 seconds), Show Activity Log, Detailed Activity Log (a line for every sol checked and
+- **View:** Download Page (Ctrl+1), Photos Page (Ctrl+2), Theme, **Units** (Data: Auto, KB, MB, GB or TB;
+  Speed: Auto, KB/s, MB/s or Mbit/s; Speed Averaged Over: 5, 10, 30 or 60 seconds), Show Activity Log, Detailed Activity Log (a line for every sol checked and
   every photo saved or skipped), Window Opacity, Reset View Options.
 - **Help:** Mars Vista Website, Open App Data Folder, Report a Problem (the project's GitHub issues), About.
 
 *Reset Settings to Defaults* resets rovers, cameras, the sol range, parallel downloads, the download limit and
 the retry option. The photo folder, the API key, the app data folder, scan results and request counts are kept.
-View options have their own reset.
+View options have their own reset: *Reset View Options* puts units, speed averaging, the theme, the activity log,
+folded cards, window opacity, the thumbnail size and the order of the sols list back to their defaults. Favorites
+and flipbooks are never reset.
 
 </details>
 
@@ -335,9 +367,9 @@ The app keeps a few files of its own (settings, scan results, Mars Vista request
 unavailable at NASA, the photo details looked up for the Photos page in `photo_details.db`, and your favorites and
 flipbooks in `favorites.json`) in its *app data folder*, never in your photo folder. If the window ever stops
 responding for half a second or more, `slow_moments.log` there notes when, for how long and what the app was doing
-(at most 256 KB), which helps find the cause; *Help > Open App Data Folder* opens it. The photo details grow with your library: roughly 200–250 MB once all of
-Curiosity's and Perseverance's photos have theirs. You choose it on first run; it
-can be on any drive. The suggested place is `%LOCALAPPDATA%\RoverImageScraper\` on Windows and
+(at most 256 KB), which helps find the cause; *Help > Open App Data Folder* opens it. The photo details grow
+with your library: roughly 200–250 MB once all of Curiosity's and Perseverance's photos have theirs. You choose
+the folder on first run; it can be on any drive. The suggested place is `%LOCALAPPDATA%\RoverImageScraper\` on Windows and
 `~/.local/share/RoverImageScraper/` on macOS and Linux. Which folder you chose is remembered for your user account
 (in the Windows registry under `HKCU\Software\RoverImageScraper`, or in `~/.config/RoverImageScraper/data_folder`
 on macOS and Linux), and the command line uses the same folder.
@@ -431,9 +463,9 @@ each [release](https://github.com/cincottash/RoverImageScraper/releases). Each c
 Python and the libraries it needs, so it runs without Python and downloads nothing to start. The standalone app is
 the desktop app only; the command line runs from the source code.
 
-- **Windows: `RoverImageScraper.exe`** (about 35 MB). Each time it starts it unpacks itself into Windows'
+- **Windows: `RoverImageScraper.exe`** (about 40 MB). Each time it starts it unpacks itself into Windows'
   temporary folder (about 90 MB); that copy is removed when it closes.
-- **Linux: `RoverImageScraper-x86_64.AppImage`** (an [AppImage](https://appimage.org), about 60 MB). Runs on
+- **Linux: `RoverImageScraper-x86_64.AppImage`** (an [AppImage](https://appimage.org), about 65 MB). Runs on
   64-bit Intel/AMD Linux from about 2022 on: Ubuntu 22.04 or newer, Debian 12, Fedora 36 and similar. If it says
   FUSE is missing, install it (`sudo apt install libfuse2` on Ubuntu/Debian) or run it with
   `--appimage-extract-and-run`. The API key is kept in your desktop's keyring (GNOME Keyring or KWallet); without
