@@ -2112,7 +2112,8 @@ class MainWindow(QMainWindow):
             for rover, sols in todo.items():
                 if not sols:
                     continue
-                self._post("progress", {"event": "rover", "rover": rover, "total": len(sols), "sol_min": sols[0]})
+                self._post("progress", {"event": "rover", "rover": rover, "total": len(sols), "sol_min": sols[0],
+                                        "first": min(sols), "last": max(sols)})
                 for i, sol in enumerate(sols, 1):
                     if self.cancel.is_set():
                         break
@@ -2838,7 +2839,8 @@ class MainWindow(QMainWindow):
             ps["rover_index"], ps["rover_count"] = e["index"], e["count"]
             self.pos["rover_index"] = e["index"]
         elif kind == "rover":
-            ps.update(rover=e["rover"], total=e["total"], index=0, sol=None, camera=None, sol_min=e.get("sol_min"))
+            ps.update(rover=e["rover"], total=e["total"], index=0, sol=None, camera=None, first=e.get("first"),
+                      last=e.get("last"))
             self.rover_started = time.time()
             if self.mode == "download":
                 self.pos.update(rover=e["rover"], sol_min=e["sol_min"])
@@ -3075,14 +3077,17 @@ class MainWindow(QMainWindow):
             self.pill.setToolTip("")
 
     def _sol_count(self, ps: dict, which: str) -> tuple[str, str]:
-        """'33 of 751 sols' for the progress line, and its tooltip: the sol shown is a sol number, this is how
-        far along the run's list of sols it is (sol numbers skip days without photos)."""
+        """'33 of 751 sols (4,300–5,079)' for the progress line: how far along the run's list of sols it is, with
+        the sols the list covers, so it can't be read as sol numbers. And its tooltip."""
         i, n = ps.get("index", 0), ps["total"]
-        since = ps.get("sol_min")
-        which = which + (f", from sol {since:,} on" if since else "")
-        tip = (f"Sol {fmt(ps.get('sol'))} is number {i:,} of the {n:,} {ps.get('rover')} sols {which}. Sol "
-               "numbers skip days without photos, so this counts sols rather than giving sol numbers.")
-        return f"{i:,} of {n:,} sols", tip
+        first, last = ps.get("first"), ps.get("last")
+        span = ""
+        if first is not None and last is not None:
+            span = f" ({first:,}–{last:,})" if last != first else f" ({first:,})"
+        tip = (f"Sol {fmt(ps.get('sol'))} is number {i:,} of the {n:,} {ps.get('rover')} sols {which}"
+               + (f", sols {first:,} to {last:,}" if span and last != first else "")
+               + ". Days without photos have no sol to check, so there are fewer sols than sol numbers.")
+        return f"{i:,} of {n:,} sols{span}", tip
 
     def _update_progress(self) -> None:
         ps = self.progress_state
