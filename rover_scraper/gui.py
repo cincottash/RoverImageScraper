@@ -2838,7 +2838,7 @@ class MainWindow(QMainWindow):
             ps["rover_index"], ps["rover_count"] = e["index"], e["count"]
             self.pos["rover_index"] = e["index"]
         elif kind == "rover":
-            ps.update(rover=e["rover"], total=e["total"], index=0, sol=None, camera=None)
+            ps.update(rover=e["rover"], total=e["total"], index=0, sol=None, camera=None, sol_min=e.get("sol_min"))
             self.rover_started = time.time()
             if self.mode == "download":
                 self.pos.update(rover=e["rover"], sol_min=e["sol_min"])
@@ -3074,13 +3074,24 @@ class MainWindow(QMainWindow):
         if tone != "err":
             self.pill.setToolTip("")
 
+    def _sol_count(self, ps: dict, which: str) -> tuple[str, str]:
+        """'33 of 751 sols' for the progress line, and its tooltip: the sol shown is a sol number, this is how
+        far along the run's list of sols it is (sol numbers skip days without photos)."""
+        i, n = ps.get("index", 0), ps["total"]
+        since = ps.get("sol_min")
+        which = which + (f", from sol {since:,} on" if since else "")
+        tip = (f"Sol {fmt(ps.get('sol'))} is number {i:,} of the {n:,} {ps.get('rover')} sols {which}. Sol "
+               "numbers skip days without photos, so this counts sols rather than giving sol numbers.")
+        return f"{i:,} of {n:,} sols", tip
+
     def _update_progress(self) -> None:
         ps = self.progress_state
+        tip = ""
         if self.mode in ("scan", "full") and ps.get("scan_rover"):
             rover = ps.get("rover") or ps["scan_rover"]
             if ps.get("full") and ps.get("total"):
-                self.phase.setText(f"Full check · {rover} · sol {fmt(ps.get('sol'))} "
-                                   f"({ps.get('index', 0):,} of {ps['total']:,})")
+                place, tip = self._sol_count(ps, "the full check goes through")
+                self.phase.setText(f"Full check · {rover} · sol {fmt(ps.get('sol'))}   ·   {place}")
                 self.bar.setValue(int(1000 * ps.get("index", 0) / max(1, ps["total"])))
             elif ps.get("scan_total"):
                 self.phase.setText(f"Scanning {ps['scan_rover']} · sol folders {ps['scan_index']:,} of "
@@ -3091,9 +3102,11 @@ class MainWindow(QMainWindow):
         elif self.mode == "download" and not self.cancel.is_set():
             if ps.get("total"):
                 frac = ps.get("index", 0) / max(1, ps["total"])
-                where = f"{ps.get('rover')} · sol {fmt(ps.get('sol'))} ({ps.get('index', 0):,} of {ps['total']:,})"
+                place, tip = self._sol_count(ps, "with photos online that this download goes through")
+                where = f"{ps.get('rover')} · sol {fmt(ps.get('sol'))}"
                 if ps.get("camera"):
                     where += f" · {ps['camera']}"
+                where += f"   ·   {place}"
                 if ps.get("rover_count", 1) > 1:
                     where += f"   ·   rover {ps.get('rover_index', 1)} of {ps['rover_count']}"
                 self.phase.setText(where)
@@ -3105,14 +3118,16 @@ class MainWindow(QMainWindow):
         elif self.mode == "details" and not self.cancel.is_set():
             if ps.get("total"):
                 done, totals = self.details_totals or (0, None)
-                where = (f"Getting details · {ps.get('rover')} · sol {fmt(ps.get('sol'))} "
-                         f"({ps.get('index', 0):,} of {ps['total']:,})")
+                place, tip = self._sol_count(ps, "in the photo folder still to look up")
+                where = f"Getting details · {ps.get('rover')} · sol {fmt(ps.get('sol'))}   ·   {place}"
                 if totals is not None:
-                    where += f" · {count(totals.known + totals.matched, 'photo')} matched"
+                    where += f"   ·   {count(totals.known + totals.matched, 'photo')} matched"
                 self.phase.setText(where)
                 self.bar.setValue(int(1000 * ps.get("index", 0) / max(1, ps["total"])))
             else:
                 self.phase.setText("Getting details…")
+        if self.phase.toolTip() != tip:
+            self.phase.setToolTip(tip)
 
         self._update_counters()
         self._update_page_status()
