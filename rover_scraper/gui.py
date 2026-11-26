@@ -893,7 +893,11 @@ class MainWindow(QMainWindow):
         # Camera selection to bring back when an unticked rover is ticked again (and what's saved for it).
         self.saved_excluded: dict[str, set[str]] = {n: set(c) for n, c in self.settings.excluded_cameras.items()}
         self.speed_samples: collections.deque = collections.deque(maxlen=1000)
-        self.sol_samples: collections.deque = collections.deque(maxlen=5000)   # (time, sol index) for Time left
+        # (time, sol index, photos downloaded) for Time Left
+        self.sol_samples: collections.deque = collections.deque(maxlen=5000)
+        self.eta_at: float | None = None          # when Time Left last expected the rover to be done
+        self.run_paused = False                   # waiting for the download limit or Mars Vista's limit
+        self.pause_seen = False                   # a pause since the last sample: measure afresh after it
         self.active_scraper: Scraper | None = None     # the running download, for settings changed mid-run
         self.api_error = ""
         self.last_summary = ""
@@ -1306,8 +1310,10 @@ class MainWindow(QMainWindow):
                                        "NASA no longer serves. They can't be downloaded, so they're remembered and "
                                        "skipped on later runs instead of counting as missing. Download > Retry "
                                        "Photos Unavailable at NASA tries them all again.",
-                "Time Left": "Estimated from how fast sols went by over the last two minutes, so it changes when "
-                             "the download moves from sols you already have to new ones."}
+                "Time Left": "For the rover being downloaded. Estimated from how fast sols went by over the last "
+                             "two minutes, and with a download limit on, from how many photos sols need at the "
+                             "limit's pace. It changes when the download moves from sols you already have to new "
+                             "ones. While waiting for a limit, it counts down."}
         for name, r, c in items:
             head = label(name, "rowHead")
             head.setToolTip(tips.get(name, ""))
@@ -2563,6 +2569,7 @@ class MainWindow(QMainWindow):
         self.problems_btn.setVisible(False)
         self.speed_samples.clear()
         self.sol_samples.clear()
+        self.eta_at, self.pause_seen = None, False
         self.pos = {}
         self.run_started, self.run_ended = time.time(), 0.0
         self._log(f"=== Download started {time.strftime('%H:%M')}: {', '.join(rovers)}"
@@ -2613,6 +2620,7 @@ class MainWindow(QMainWindow):
         self.problems_btn.setVisible(False)
         self.speed_samples.clear()
         self.sol_samples.clear()
+        self.eta_at, self.pause_seen = None, False
         self.pos = {"rover": cp["rover"], "rover_index": cp["rover_index"], "sol": cp["sol"],
                     "sol_min": cp["sol_min"]}
         self.run_started, self.run_ended = time.time() - cp.get("elapsed", 0), 0.0
@@ -2838,7 +2846,11 @@ class MainWindow(QMainWindow):
             ps.update(rover=e["rover"], sol=e["sol"], index=e["index"], total=e["total"], camera=None)
             if self.sol_samples and self.sol_samples[-1][1] > e["index"]:      # a new rover started
                 self.sol_samples.clear()
-            self.sol_samples.append((time.time(), e["index"]))
+                self.eta_at = None
+            if self.pause_seen and not self.run_paused:     # moving again: measure from here, not across the wait
+                self.sol_samples.clear()
+                self.pause_seen = False
+            self.sol_samples.append((time.time(), e["index"], self.report.downloaded if self.report else 0))
             if self.mode == "download":
                 self.pos["sol"] = e["sol"]
         elif kind == "camera":
@@ -3030,6 +3042,9 @@ class MainWindow(QMainWindow):
             self.banner_title.setText("⏸  NASA's image servers are busy. Retrying automatically.")
             self.banner_text.setText("Some downloads are being retried. No action needed.")
         self.banner.setVisible(limit_wait or waiting or nasa_busy)
+        self.run_paused = bool(limit_wait or waiting)
+        if self.run_paused:
+            self.pause_seen = True
         if self.bar.property("paused") != (waiting or limit_wait):
             self.bar.setProperty("paused", waiting or limit_wait)
             repolish(self.bar)
@@ -3146,16 +3161,36 @@ class MainWindow(QMainWindow):
         while len(self.sol_samples) > 2 and now - self.sol_samples[1][0] >= 120:      # keep the last 2 minutes
             self.sol_samples.popleft()
         left = None
-        if running and remaining > 0 and len(self.sol_samples) >= 2:
-            (t0, i0), (_, i1) = self.sol_samples[0], self.sol_samples[-1]
-            span = now - t0
-            if span >= 20 and i1 > i0:
-                left = remaining / ((i1 - i0) / span)      # sols per second, recently
-        if left is not None:
+        if running and remaining > 0:
+            # While waiting for a limit (and until sols move again), the estimate isn't measured: it counts down
+            # from the last one, which already allows for the waits a download limit makes.
+            if not (self.run_paused or self.pause_seen):
+                rate = self._sol_rate(now)
+                if rate:
+                    self.eta_at = now + remaining / rate
+            if self.eta_at is not None:
+                left = max(0.0, self.eta_at - now)
+        if left:
             rest = " (this rover)" if ps.get("rover_count", 1) > 1 else ""
             self.counters["Time Left"].setText(f"~{fmt_duration(left)}{rest}")
         else:
             self.counters["Time Left"].setText("–")
+
+    def _sol_rate(self, now: float) -> float | None:
+        """Sols per second lately (the last two minutes of samples), or None while there's too little to tell.
+        With a download limit on, never faster than the limit allows: the photos a sol needed lately, at the
+        limit's pace (the limit's pauses are then part of the estimate)."""
+        if len(self.sol_samples) < 2:
+            return None
+        (t0, i0, d0), (_, i1, d1) = self.sol_samples[0], self.sol_samples[-1]
+        span = now - t0
+        if span < 20 or i1 <= i0:
+            return None
+        rate = (i1 - i0) / span
+        lim = self.limiter
+        if lim is not None and self.limit_box.isChecked() and d1 > d0 and lim.max_files > 0:
+            rate = min(rate, (i1 - i0) / (d1 - d0) * lim.max_files / lim.period)
+        return rate
 
     # ---- library status ----------------------------------------------------------------------------------
 

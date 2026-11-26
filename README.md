@@ -291,9 +291,11 @@ and flipbooks are never reset.
 - **Unavailable at NASA:** photos NASA's image servers won't send (HTTP 403 or 404), usually older images NASA
   no longer serves. They can't be downloaded, so the app remembers them and skips them on later runs instead of
   counting them as missing.
-- **Speed**, **Photo Rate** and **Average Speed**, **Errors**, **Elapsed**, and **Time Left:** an estimate based
-  on how fast sols went by over the last two minutes. It can change noticeably when the run moves from sols you
-  already have (fast) to new ones (slower, since they're downloaded).
+- **Speed**, **Photo Rate** and **Average Speed**, **Errors**, **Elapsed**, and **Time Left:** an estimate for
+  the rover being downloaded, based on how fast sols went by over the last two minutes. With *Limit Downloads*
+  on, it also allows for the limit: it uses how many photos the recent sols needed, at the pace the limit allows.
+  While the download waits for a limit, Time Left counts down instead of being measured. It can change noticeably
+  when the run moves from sols you already have (fast) to new ones (slower, since they're downloaded).
 - **Mars Vista API Usage:** requests used this hour and today, counted by the app. *NASA Archive* counts requests
   for Spirit and Opportunity, which have no limit.
 - **Limit Downloads:** with 500 per hour, no 60-minute stretch has more than 500 photo downloads. Typing a number
