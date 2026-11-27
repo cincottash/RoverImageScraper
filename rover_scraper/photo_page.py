@@ -2300,14 +2300,30 @@ class PhotosPage(QWidget):
 
     def _show_photos(self, key, photos: list[PhotoFile], title: str, show_camera: bool, empty: str,
                      caption_fn: Callable[[PhotoFile], str] | None = None) -> None:
+        # The same list again (the page shown again found a new sol folder, so its list was rebuilt): keep the
+        # place and the chosen photo, instead of going back to the top while a download adds photos.
+        again = key == self.view_key and bool(self.model.photos) and not self.select_path
+        place = self.grid.verticalScrollBar().value()
+        cur = self.grid.currentIndex()
+        cur_path = self.model.photos[cur.row()].path if again and 0 <= cur.row() < len(self.model.photos) else None
         self.view_key = key
         self.grid_title.setText(title)
         self.model.caption_fn = caption_fn
+        if again:                       # laid out at once, so the old place exists when it's set back
+            self.grid.setLayoutMode(QListView.LayoutMode.SinglePass)
         self.model.set_photos(photos, show_camera)
         self.full_cache.clear()
         if photos:
             if self.stack.currentWidget() is not self.full_page:
                 self.stack.setCurrentWidget(self.grid)
+            if again:
+                self.grid.doItemsLayout()
+                row = self.model.rows.get(cur_path, 0) if cur_path else 0
+                self.grid.selectionModel().setCurrentIndex(self.model.index(row),
+                                                           QItemSelectionModel.SelectionFlag.ClearAndSelect)
+                self.grid.verticalScrollBar().setValue(place)
+                self.grid.setLayoutMode(QListView.LayoutMode.Batched)
+                return
             row = self.model.rows.get(self.select_path, 0) if self.select_path else 0
             self.select_path = None
             self.grid.setCurrentIndex(self.model.index(row))
