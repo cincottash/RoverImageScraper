@@ -333,6 +333,10 @@ class FlipbookBar(QWidget):
         self.edit_btn.setToolTip("Show this flipbook's frames as thumbnails: Delete removes, Ctrl+C and Ctrl+V "
                                  "copy and paste, right-click for more")
         row2.addWidget(self.edit_btn)
+        self.export_btn = QPushButton("Export…")
+        self.export_btn.setToolTip("Save these photos as an animated GIF or WebP file, as they play (order, speed, "
+                                   "loop and Skip Odd Sizes)")
+        row2.addWidget(self.export_btn)
         self.save_btn = QPushButton("Save Flipbook…")
         self.save_btn.setToolTip("Keep these photos, in this order, with the speed and options, under Flipbooks")
         row2.addWidget(self.save_btn)

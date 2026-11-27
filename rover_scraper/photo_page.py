@@ -20,7 +20,8 @@ from PySide6.QtCore import (QAbstractListModel, QEvent, QItemSelectionModel, QMo
                             QRectF, QSize, Qt, QTimer, QUrl, Signal)
 from PySide6.QtGui import (QColor, QDesktopServices, QImage, QImageReader, QIntValidator, QKeySequence, QPainter,
                            QPalette, QPixmap, QShortcut)
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel,
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
+                               QInputDialog, QLabel,
                                QLineEdit, QListView, QMenu, QMessageBox, QPushButton, QSizePolicy, QSlider,
                                QStackedWidget, QStyle, QStyledItemDelegate, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                                QWidget)
@@ -660,6 +661,8 @@ class PhotosPage(QWidget):
         # Questions the page asks (replaced in tests, so no dialog ever opens there)
         self.ask_text: Callable[[str, str, str], str | None] = self._ask_text
         self.confirm: Callable[[str, str], bool] = self._confirm
+        self.ask_save_path: Callable[[str, str, str], str | None] = self._ask_save_path
+        self.export_dialog = None
         self.photo_time: Callable[[PhotoFile], str | None] | None = None      # when a photo was taken, if known
         self.fav_item: QTreeWidgetItem | None = None     # "All Favorite Photos", on the Favorites tab
         self.browse_tab = "Sols"
@@ -1865,6 +1868,7 @@ class PhotosPage(QWidget):
         bar.same_box.toggled.connect(self._flip_options)
         bar.reverse_btn.clicked.connect(self._reverse)
         bar.edit_btn.clicked.connect(self._edit_frames)
+        bar.export_btn.clicked.connect(self._export_flipbook)
         bar.save_btn.clicked.connect(lambda: self._save_flipbook(as_new=False))
         bar.save_new_btn.clicked.connect(lambda: self._save_flipbook(as_new=True))
         bar.delete_btn.clicked.connect(lambda: self.flip_book and self._delete_flipbook(self.flip_book.id))
@@ -2107,6 +2111,39 @@ class PhotosPage(QWidget):
         self._refresh_special()
         self._notify(f"Saved the flipbook “{b.name}” ({count_text(len(frames), 'frame')}): it's in the Flipbooks "
                      f"tab")
+
+    def _export_flipbook(self) -> None:
+        """Export…: what Play plays (a saved flipbook, the selected photos or the camera folder) as a GIF or WebP
+        file, in the Export Flipbook window."""
+        book = self._book_view()
+        if book is None:
+            p = self.current or self.player.shown()
+            if p is not None:
+                self._sync_flip_ctx(p)
+            if self.flip_pending is not None:          # not yet: its folder is being read
+                self._notify("The camera folder is still being read; try Export again in a moment")
+                return
+        frames = self._frames()
+        if not frames:
+            self._notify("Nothing to export")
+            return
+        if book is not None:
+            name = book.name
+        elif len({(x.rover, x.sol, x.camera) for x in frames}) == 1:
+            name = f"{frames[0].rover} · Sol {frames[0].sol:,} · {camera_name(frames[0].camera)}"
+        else:
+            name = count_text(len(frames), "photo")
+        bar = self.flip_bar
+        self._pause_flipbook(select=False)
+        from flipbook_export import ExportDialog      # here: Pillow loads only when something is exported
+        self.export_dialog = ExportDialog(self, frames, name, float(bar.speed.value()), bar.loop_box.isChecked(),
+                                          bar.same_box.isChecked(), self.settings, self.save_settings,
+                                          self.ask_save_path)
+        self.export_dialog.open()
+
+    def _ask_save_path(self, title: str, suggested: str, filter_text: str) -> str | None:
+        path, _ = QFileDialog.getSaveFileName(self, title, suggested, filter_text)
+        return path or None
 
     def _open_flipbook(self, book_id: str) -> None:
         b = self.favs.flipbook(book_id)
