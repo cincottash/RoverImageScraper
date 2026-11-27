@@ -108,20 +108,41 @@ class FlipbookPlayer(QObject):
         if show:
             self.status.emit("Loading…")
 
-    def _read_ahead(self) -> None:
+    def _skipped(self, p: PhotoFile, ref: str | None) -> bool:
+        """Known to be unplayable: unreadable, or (with Skip Odd Sizes) read before and another size. A frame's
+        size is kept after its picture is let go, so a skipped frame is never read again just to skip it."""
+        size = self.sizes.get(p.path)
+        return p.path in self.failed or bool(ref and size and size != ref)
+
+    def _upcoming(self) -> list[int]:
+        """The next frames to show after the one shown: ones that play and ones not read yet. Frames known to be
+        skipped don't count, so a long run of thumbnails can't use up the read-ahead."""
         n = len(self.frames)
         ahead = max(12, int(self.fps * 2))
-        for step in range(1, ahead + 1):
+        ref = self._reference_size() if self.same_size else None
+        out = []
+        for step in range(1, n + 1):
             i = self.index + step
             if i >= n:
                 if not self.loop:
                     break
                 i %= n
+            if not self._skipped(self.frames[i], ref):
+                out.append(i)
+                if len(out) >= ahead:
+                    break
+        return out
+
+    def _read_ahead(self) -> None:
+        n = len(self.frames)
+        upcoming = self._upcoming()
+        for i in upcoming:
             p = self.frames[i]
-            if p.path not in self.pix and p.path not in self.failed:
+            if p.path not in self.pix:
                 self.loader.request(self._key(p), p.path, self._size, low=True)
-        if n > KEEP_ALL:                  # a long run: keep only frames near the one shown
-            near = {self.frames[(self.index + d) % n].path for d in range(-2, ahead + 2)}
+        if n > KEEP_ALL:                  # a long run: keep only the frame shown, two before it and the next ones
+            near = {self.frames[(self.index + d) % n].path for d in range(-2, 1)}
+            near.update(self.frames[i].path for i in upcoming)
             for path in [k for k in self.pix if k not in near]:
                 del self.pix[path]
 
@@ -176,7 +197,7 @@ class FlipbookPlayer(QObject):
                     return
                 i = 0
             p = self.frames[i]
-            if p.path in self.failed:
+            if self._skipped(p, ref):    # before the check below: a skipped frame's picture isn't kept
                 continue
             if p.path not in self.pix:   # not read yet: wait for it (a slow disk pauses, never skips)
                 self._waiting_for = None
@@ -184,8 +205,6 @@ class FlipbookPlayer(QObject):
                 self.status.emit(f"Loading frame {i + 1:,} of {n:,}…")
                 self._read_ahead()
                 return
-            if ref and self.sizes.get(p.path) and self.sizes[p.path] != ref:
-                continue
             self._show(i)
             self._read_ahead()
             return
