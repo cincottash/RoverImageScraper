@@ -19,12 +19,12 @@ import threading
 import time
 import traceback
 
-from PySide6.QtCore import QEvent, QObject, QProcess, Qt, QTimer, QUrl
+from PySide6.QtCore import QEvent, QObject, QPointF, QProcess, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QActionGroup, QColor, QDesktopServices, QFont, QIcon, QIntValidator, QKeySequence,
                            QPalette)
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QGridLayout,
-                               QComboBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
+                               QComboBox, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
                                QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSlider,
                                QStackedWidget, QToolButton, QVBoxLayout, QWidget, QWidgetAction)
 
@@ -423,6 +423,7 @@ def apply_theme(app: QApplication, t: dict, only=None) -> None:
         QFrame#card QLabel, QFrame#card QCheckBox {{ background: transparent; }}
         QLabel#appTitle {{ font-size: 13pt; font-weight: 600; }}
         QLabel#cardTitle {{ color: {t['muted']}; font-size: 8.5pt; font-weight: 700; letter-spacing: 0.6px; }}
+        QFrame#dropLine {{ background: {t['accent']}; border: none; border-radius: 1px; }}
         QLabel#muted {{ color: {t['muted']}; }}
         QLabel#big {{ font-size: 11pt; font-weight: 600; }}
         QLabel#value {{ font-weight: 600; }}
@@ -861,6 +862,156 @@ class PopupOpacity(QObject):
         return False
 
 
+class CardMover(QObject):
+    """Drag a card of the Download page by its title row to another place in its own column. A line shows where
+    it will go; letting go outside the column puts it back. moved(column) follows a move."""
+
+    moved = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.columns: dict[str, tuple[QVBoxLayout, QWidget, QWidget]] = {}   # name -> (layout, its widget, area)
+        self.cards: dict[QFrame, tuple[str, QHBoxLayout]] = {}               # card -> (column, title row)
+        self.press: tuple[QFrame, QPointF] | None = None
+        self.dragging: QFrame | None = None
+        self.target: int | None = None
+        self.line = QFrame()
+        self.line.setObjectName("dropLine")
+        self.line.setFixedHeight(3)
+        self.line.hide()
+
+    def add_column(self, name: str, layout: QVBoxLayout, widget: QWidget, area: QWidget) -> None:
+        self.columns[name] = (layout, widget, area)
+
+    def add_card(self, column: str, frame: QFrame, head: QHBoxLayout) -> None:
+        self.cards[frame] = (column, head)
+        frame.installEventFilter(self)
+        for i in range(head.count()):
+            w = head.itemAt(i).widget()
+            if isinstance(w, QLabel):
+                w.setCursor(Qt.CursorShape.OpenHandCursor)
+                w.setToolTip("Drag to move this card up or down")
+
+    def column_cards(self, column: str) -> list[QFrame]:
+        layout = self.columns[column][0]
+        items = [layout.itemAt(i).widget() for i in range(layout.count())]
+        return [w for w in items if w in self.cards]
+
+    def _in_head(self, frame: QFrame, global_pos: QPointF) -> bool:
+        head = self.cards[frame][1]
+        r = head.geometry().adjusted(-8, -8, 8, 4)                 # the row, and the card's margin around it
+        return r.contains(frame.mapFromGlobal(global_pos.toPoint()))
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj not in self.cards:
+            return False
+        t = event.type()
+        if t == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+            if self._in_head(obj, event.globalPosition()):
+                self.press = (obj, event.globalPosition())
+                return True
+        elif t == QEvent.Type.MouseMove and self.press is not None and self.press[0] is obj:
+            if self.dragging is None:
+                if (event.globalPosition() - self.press[1]).manhattanLength() < QApplication.startDragDistance():
+                    return True
+                self._start(obj)
+            self._track(event.globalPosition())
+            return True
+        elif t == QEvent.Type.MouseButtonRelease and self.press is not None and self.press[0] is obj:
+            self.press = None
+            if self.dragging is not None:
+                self._finish(event.globalPosition())
+            return True
+        return False
+
+    def _start(self, frame: QFrame) -> None:
+        self.dragging = frame
+        effect = QGraphicsOpacityEffect(frame)
+        effect.setOpacity(0.45)
+        frame.setGraphicsEffect(effect)
+        QApplication.setOverrideCursor(Qt.CursorShape.ClosedHandCursor)
+        self.line.setParent(self.columns[self.cards[frame][0]][1])
+
+    def drop_index(self, column: str, global_pos: QPointF) -> int | None:
+        """Where a card let go here goes, among the column's cards (None: outside the column)."""
+        _layout, widget, area = self.columns[column]
+        if not area.rect().contains(area.mapFromGlobal(global_pos.toPoint())):
+            return None
+        y = widget.mapFromGlobal(global_pos.toPoint()).y()
+        cards = self.column_cards(column)
+        shown = [c for c in cards if c.isVisible()]
+        for c in shown:
+            if y < c.geometry().center().y():
+                return cards.index(c)
+        return cards.index(shown[-1]) + 1 if shown else len(cards)
+
+    def _track(self, global_pos: QPointF) -> None:
+        column = self.cards[self.dragging][0]
+        self.target = self.drop_index(column, global_pos)
+        if self.target is None:
+            self.line.hide()
+            return
+        cards = self.column_cards(column)
+        before = cards[self.target - 1] if self.target > 0 else None
+        after = cards[self.target] if self.target < len(cards) else None
+        ref = after or before
+        if before is not None and after is not None:
+            y = (before.geometry().bottom() + after.geometry().top()) // 2
+        elif after is not None:
+            y = after.geometry().top() - 6
+        else:
+            y = before.geometry().bottom() + 6
+        self.line.setGeometry(ref.geometry().left(), y - 1, ref.geometry().width(), 3)
+        self.line.show()
+        self.line.raise_()
+
+    def _finish(self, global_pos: QPointF) -> None:
+        self._track(global_pos)
+        frame, self.dragging = self.dragging, None
+        target, self.target = self.target, None
+        frame.setGraphicsEffect(None)
+        QApplication.restoreOverrideCursor()
+        self.line.hide()
+        if target is None:                              # let go outside the column: it stays where it was
+            return
+        column = self.cards[frame][0]
+        cards = self.column_cards(column)
+        old = cards.index(frame)
+        new = target - 1 if target > old else target
+        if new != old:
+            self.move(column, frame, new)
+
+    def move(self, column: str, frame: QFrame, index: int) -> None:
+        """Put a card at this place among its column's cards (the cards come first in the column's layout)."""
+        layout = self.columns[column][0]
+        layout.removeWidget(frame)
+        layout.insertWidget(index, frame)
+        self.moved.emit(column)
+
+    def titles(self, column: str) -> list[str]:
+        return [card_title(c) for c in self.column_cards(column)]
+
+    def apply_order(self, column: str, saved: list[str]) -> None:
+        """Put the column's cards in the saved order. Cards it doesn't list (new in a later version) keep their
+        place from the built order."""
+        cards = sorted(self.column_cards(column), key=list(self.cards).index)       # the built order
+        by_title = {card_title(c): c for c in cards}
+        order = [by_title[t] for t in dict.fromkeys(saved) if t in by_title]
+        for i, c in enumerate(cards):
+            if c not in order:
+                order.insert(min(i, len(order)), c)
+        layout = self.columns[column][0]
+        for i, c in enumerate(order):
+            layout.removeWidget(c)
+            layout.insertWidget(i, c)
+
+
+def card_title(frame: QFrame) -> str:
+    """A card's title, as shown (for example "PROGRESS")."""
+    t = frame.findChild(QLabel, "cardTitle")
+    return t.text() if t is not None else ""
+
+
 class MainWindow(QMainWindow):
     POLL_MS = 200
 
@@ -1008,6 +1159,7 @@ class MainWindow(QMainWindow):
         right_scroll.setWidget(right_w)
         body.addWidget(right_scroll, 1)
 
+        self.card_heads: dict[str, QHBoxLayout] = {}           # each card's title row, by title
         self._build_folder_card()
         self._build_key_card()
         self._build_rovers_card()
@@ -1025,9 +1177,19 @@ class MainWindow(QMainWindow):
         # height and they stay together at the top.
         right.addStretch(0)
         self.foldable: dict[str, tuple[QFrame, QWidget, QToolButton]] = {}
-        left_cards = [self.left_col.itemAt(i).widget() for i in range(self.left_col.count())]
-        for frame in [c for c in left_cards if c is not None] + self.right_cards:
+        left_cards = [c for c in (self.left_col.itemAt(i).widget() for i in range(self.left_col.count()))
+                      if c is not None]
+        for frame in left_cards + self.right_cards:
             self._make_foldable(frame)
+        # Cards are dragged by their title row to another place in their column; the order is saved.
+        self.card_mover = CardMover(self)
+        self.card_mover.add_column("left", self.left_col, left, left_scroll)
+        self.card_mover.add_column("right", self.right_col, right_w, right_scroll)
+        for frame in left_cards:
+            self.card_mover.add_card("left", frame, self.card_heads[card_title(frame)])
+        for frame in self.right_cards + [self.activity_card]:
+            self.card_mover.add_card("right", frame, self.card_heads[card_title(frame)])
+        self.card_mover.moved.connect(self._card_moved)
 
         bottom = QFrame()
         bottom.setObjectName("bottomBar")
@@ -1444,6 +1606,17 @@ class MainWindow(QMainWindow):
         toggle.clicked.connect(lambda: self._set_card_open(name, not self.foldable[name][1].isVisibleTo(frame)))
         head.addWidget(toggle)
         self.foldable[name] = (frame, body, toggle)
+        self.card_heads[name] = head
+
+    def _card_moved(self, column: str) -> None:
+        self.settings.card_order = {**self.settings.card_order, column: self.card_mover.titles(column)}
+        self._update_right_stretch()
+        self._save_settings()
+
+    def _apply_card_order(self) -> None:
+        for column in ("left", "right"):
+            self.card_mover.apply_order(column, list(self.settings.card_order.get(column, [])))
+        self._update_right_stretch()
 
     def _set_card_open(self, name: str, open_: bool, save: bool = True) -> None:
         frame, body, toggle = self.foldable[name]
@@ -1479,6 +1652,7 @@ class MainWindow(QMainWindow):
         self.log_toggle.clicked.connect(self._toggle_log)
         head.addWidget(self.log_toggle)
         lay.addLayout(head)
+        self.card_heads["ACTIVITY"] = head
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(5000)
@@ -1513,6 +1687,7 @@ class MainWindow(QMainWindow):
         self._update_camera_toggles()
         self._set_log_visible(s.show_log)
         self._apply_folded_cards()
+        self._apply_card_order()
         if self.checkpoint:
             self._show_paused_state()
 
@@ -2264,15 +2439,15 @@ class MainWindow(QMainWindow):
 
     # View menu choices, and the download options in the left column (File > Settings > Reset Settings to Defaults).
     VIEW_FIELDS = ("data_unit", "speed_unit", "speed_window", "theme", "show_log", "collapsed_cards",
-                   "window_opacity", "photo_thumb_size", "photo_sol_sort")
+                   "window_opacity", "photo_thumb_size", "photo_sol_sort", "card_order")
     OPTION_FIELDS = ("rovers", "excluded_cameras", "check_existing", "sol_from", "sol_to", "workers", "limit_on",
                      "limit_files", "limit_period")
 
     def _reset_view(self) -> None:
         answer = QMessageBox.question(
             self, "Reset View Options?",
-            "Put data and speed units, speed averaging, theme, the activity log, folded cards, window opacity, "
-            "the thumbnail size and the order of the sols list back to their defaults?")
+            "Put data and speed units, speed averaging, theme, the activity log, folded cards, the order of the "
+            "cards, window opacity, the thumbnail size and the order of the sols list back to their defaults?")
         if answer != QMessageBox.StandardButton.Yes:
             return
         defaults = Settings()
@@ -2281,6 +2456,7 @@ class MainWindow(QMainWindow):
         self._sync_choice_checks()
         self._set_log_visible(self.settings.show_log)
         self._apply_folded_cards()
+        self._apply_card_order()
         self.opacity_slider.setValue(self.settings.window_opacity)     # also updates the value beside it
         self.photos_page.size_slider.setValue(self.settings.photo_thumb_size)
         self.photos_page.apply_sol_sort()
