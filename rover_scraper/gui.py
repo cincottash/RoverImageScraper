@@ -2112,8 +2112,7 @@ class MainWindow(QMainWindow):
             for rover, sols in todo.items():
                 if not sols:
                     continue
-                self._post("progress", {"event": "rover", "rover": rover, "total": len(sols), "sol_min": sols[0],
-                                        "first": min(sols), "last": max(sols)})
+                self._post("progress", {"event": "rover", "rover": rover, "total": len(sols), "sol_min": sols[0]})
                 for i, sol in enumerate(sols, 1):
                     if self.cancel.is_set():
                         break
@@ -2839,8 +2838,7 @@ class MainWindow(QMainWindow):
             ps["rover_index"], ps["rover_count"] = e["index"], e["count"]
             self.pos["rover_index"] = e["index"]
         elif kind == "rover":
-            ps.update(rover=e["rover"], total=e["total"], index=0, sol=None, camera=None, first=e.get("first"),
-                      last=e.get("last"))
+            ps.update(rover=e["rover"], total=e["total"], index=0, sol=None, camera=None)
             self.rover_started = time.time()
             if self.mode == "download":
                 self.pos.update(rover=e["rover"], sol_min=e["sol_min"])
@@ -3076,27 +3074,14 @@ class MainWindow(QMainWindow):
         if tone != "err":
             self.pill.setToolTip("")
 
-    def _sol_count(self, ps: dict, which: str) -> tuple[str, str]:
-        """'33 of 751 sols (4,300–5,079)' for the progress line: how far along the run's list of sols it is, with
-        the sols the list covers, so it can't be read as sol numbers. And its tooltip."""
-        i, n = ps.get("index", 0), ps["total"]
-        first, last = ps.get("first"), ps.get("last")
-        span = ""
-        if first is not None and last is not None:
-            span = f" ({first:,}–{last:,})" if last != first else f" ({first:,})"
-        tip = (f"Sol {fmt(ps.get('sol'))} is number {i:,} of the {n:,} {ps.get('rover')} sols {which}"
-               + (f", sols {first:,} to {last:,}" if span and last != first else "")
-               + ". Days without photos have no sol to check, so there are fewer sols than sol numbers.")
-        return f"{i:,} of {n:,} sols{span}", tip
-
     def _update_progress(self) -> None:
+        # The line names the sol being worked on; the bar under it shows how far along the run is. (A count of
+        # sols was tried here and read as more sol numbers: days without photos have no sol to check.)
         ps = self.progress_state
-        tip = ""
         if self.mode in ("scan", "full") and ps.get("scan_rover"):
             rover = ps.get("rover") or ps["scan_rover"]
             if ps.get("full") and ps.get("total"):
-                place, tip = self._sol_count(ps, "the full check goes through")
-                self.phase.setText(f"Full check · {rover} · sol {fmt(ps.get('sol'))}   ·   {place}")
+                self.phase.setText(f"Full check · {rover} · sol {fmt(ps.get('sol'))}")
                 self.bar.setValue(int(1000 * ps.get("index", 0) / max(1, ps["total"])))
             elif ps.get("scan_total"):
                 self.phase.setText(f"Scanning {ps['scan_rover']} · sol folders {ps['scan_index']:,} of "
@@ -3107,11 +3092,9 @@ class MainWindow(QMainWindow):
         elif self.mode == "download" and not self.cancel.is_set():
             if ps.get("total"):
                 frac = ps.get("index", 0) / max(1, ps["total"])
-                place, tip = self._sol_count(ps, "with photos online that this download goes through")
                 where = f"{ps.get('rover')} · sol {fmt(ps.get('sol'))}"
                 if ps.get("camera"):
                     where += f" · {ps['camera']}"
-                where += f"   ·   {place}"
                 if ps.get("rover_count", 1) > 1:
                     where += f"   ·   rover {ps.get('rover_index', 1)} of {ps['rover_count']}"
                 self.phase.setText(where)
@@ -3123,16 +3106,13 @@ class MainWindow(QMainWindow):
         elif self.mode == "details" and not self.cancel.is_set():
             if ps.get("total"):
                 done, totals = self.details_totals or (0, None)
-                place, tip = self._sol_count(ps, "in the photo folder still to look up")
-                where = f"Getting details · {ps.get('rover')} · sol {fmt(ps.get('sol'))}   ·   {place}"
+                where = f"Getting details · {ps.get('rover')} · sol {fmt(ps.get('sol'))}"
                 if totals is not None:
                     where += f"   ·   {count(totals.known + totals.matched, 'photo')} matched"
                 self.phase.setText(where)
                 self.bar.setValue(int(1000 * ps.get("index", 0) / max(1, ps["total"])))
             else:
                 self.phase.setText("Getting details…")
-        if self.phase.toolTip() != tip:
-            self.phase.setToolTip(tip)
 
         self._update_counters()
         self._update_page_status()
