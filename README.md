@@ -474,9 +474,9 @@ each [release](https://github.com/cincottash/RoverImageScraper/releases). Each c
 Python and the libraries it needs, so it runs without Python and downloads nothing to start. The standalone app is
 the desktop app only; the command line runs from the source code.
 
-- **Windows: `RoverImageScraper.exe`** (about 40 MB). Each time it starts it unpacks itself into Windows'
+- **Windows: `RoverImageScraper.exe`** (about 45 MB). Each time it starts it unpacks itself into Windows'
   temporary folder (about 90 MB); that copy is removed when it closes.
-- **Linux: `RoverImageScraper-x86_64.AppImage`** (an [AppImage](https://appimage.org), about 65 MB). Runs on
+- **Linux: `RoverImageScraper-x86_64.AppImage`** (an [AppImage](https://appimage.org), about 70 MB). Runs on
   64-bit Intel/AMD Linux from about 2022 on: Ubuntu 22.04 or newer, Debian 12, Fedora 36 and similar. If it says
   FUSE is missing, install it (`sudo apt install libfuse2` on Ubuntu/Debian) or run it with
   `--appimage-extract-and-run`. The API key is kept in your desktop's keyring (GNOME Keyring or KWallet); without
