@@ -39,6 +39,13 @@ class Settings:
     window_opacity: int = 100            # percent (View > Window Opacity)
     photo_thumb_size: int = 128          # Photos page: thumbnail size in pixels
     photo_sol_sort: str = "sol:asc"      # Photos page: the sol list's order ("sol" or "photos", "asc" or "desc")
+    # Download page: the cards' order in each column, by title (empty: the built-in order; cards not listed,
+    # such as ones added in a later version, go where they're built)
+    card_order: dict[str, list[str]] = field(default_factory=dict)
+    # Export Flipbook: the last choices and folder
+    export_format: str = "gif"           # gif | webp
+    export_size: int = 720               # longest side in pixels; 0: the photos' own size
+    export_folder: str = ""
 
     @classmethod
     def load(cls, path: str) -> "Settings":

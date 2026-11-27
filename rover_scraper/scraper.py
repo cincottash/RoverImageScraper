@@ -99,7 +99,7 @@ class Scraper:
         allowed = self.cameras.get(rover)
         sols = sorted(s for s in manifest if sol_min <= s <= sol_max)
         self.progress({"event": "rover", "rover": rover, "total": len(sols), "sol_min": sol_min,
-                       "sol_max": sol_max, "first": sols[0] if sols else None, "last": sols[-1] if sols else None})
+                       "sol_max": sol_max})
         for index, sol in enumerate(sols, 1):
             if self.cancel.is_set():
                 report.cancelled = True

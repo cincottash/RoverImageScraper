@@ -16,7 +16,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REQUIREMENTS = [os.path.join(ROOT, "requirements.txt"), os.path.join(ROOT, "packaging", "requirements-build.txt")]
-NEEDED = ("PyInstaller", "PySide6", "requests", "keyring")
+NEEDED = ("PyInstaller", "PySide6", "requests", "keyring", "PIL")
 MIN_PYTHON = (3, 10)
 _MARK = "ROVER_BUILD_ENV"          # set while the build reruns inside the private environment, to avoid a loop
 

@@ -7,10 +7,11 @@ full-size view.
 """
 from __future__ import annotations
 
+import threading
 from typing import Callable
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QImage, QImageReader, QPixmap
 from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 
 from photo_library import PhotoFile
@@ -25,6 +26,7 @@ class FlipbookPlayer(QObject):
     frame = Signal(object, QPixmap)
     status = Signal(str)
     finished = Signal()                # reached the last frame without Loop
+    _sizes_read = Signal(int, object)  # (load number, {path: "<width>x<height>"}) from the size reader
 
     def __init__(self, load_size: Callable[[], int], parent=None):
         super().__init__(parent)
@@ -44,10 +46,26 @@ class FlipbookPlayer(QObject):
         self.failed: set[str] = set()
         self.fps = 8.0
         self.loop = True
-        self.same_size = True
+        self._same_size = True
         self.playing = False
         self._gen = 0
         self._size = 0
+        self._closed = False
+        self._ranks: list[int] | None = None     # per frame: its number among the frames that play (0: skipped)
+        self._sizes_read.connect(self._got_sizes)
+
+    @property
+    def same_size(self) -> bool:
+        return self._same_size
+
+    @same_size.setter
+    def same_size(self, on: bool) -> None:
+        """Skip Odd Sizes; the frame counter counts again."""
+        if on != self._same_size:
+            self._same_size = on
+            self._ranks = None
+            if self.playing:
+                self._show_status()
 
     # ---- control -----------------------------------------------------------------------------------------
 
@@ -62,8 +80,13 @@ class FlipbookPlayer(QObject):
         self._size = self.load_size()
         self.frames = list(frames)
         self.index = -1
+        self._ranks = None
         if self.frames:
             self._want(min(max(start, 0), len(self.frames) - 1), show=True)
+            todo = [p.path for p in self.frames if p.path not in self.sizes and p.path not in self.failed]
+            if todo:
+                threading.Thread(target=self._read_sizes, args=(self._gen, list(dict.fromkeys(todo))),
+                                 daemon=True, name="flipbook-sizes").start()
 
     def play(self) -> None:
         if not self.frames:
@@ -86,6 +109,7 @@ class FlipbookPlayer(QObject):
 
     def close(self) -> None:
         self.pause()
+        self._closed = True
         self.loader.close()
 
     def shown(self) -> PhotoFile | None:
@@ -146,14 +170,40 @@ class FlipbookPlayer(QObject):
             for path in [k for k in self.pix if k not in near]:
                 del self.pix[path]
 
+    def _read_sizes(self, gen: int, paths: list[str]) -> None:
+        """On a background thread: each frame's size from its file header (no picture is read), so the counter
+        knows which frames play before they're reached, and other sizes are skipped without reading them."""
+        found: dict[str, str] = {}
+        for k, path in enumerate(paths):
+            if self._closed or gen != self._gen:
+                return
+            s = QImageReader(path).size()          # the same size read_image keeps in its text
+            if s.isValid():
+                found[path] = f"{s.width()}x{s.height()}"
+            if found and (len(found) >= 100 or k == len(paths) - 1):
+                self._sizes_read.emit(gen, found)
+                found = {}
+
+    def _got_sizes(self, gen: int, found: dict) -> None:
+        if gen != self._gen:
+            return
+        for path, size in found.items():
+            self.sizes.setdefault(path, size)
+        self._ranks = None
+        if self.playing:
+            self._show_status()
+
     def _ready(self, key, img: QImage) -> None:
         if not (isinstance(key, tuple) and key[0] == "frame" and key[1] == self._gen):
             return
         path = key[2]
         if img.isNull():
             self.failed.add(path)
+            self._ranks = None
         else:
             self.pix[path] = QPixmap.fromImage(img)
+            if path not in self.sizes:
+                self._ranks = None
             self.sizes[path] = img.text(self._full_size_text)
         w = self._waiting_for
         if w is not None and 0 <= w < len(self.frames) and self.frames[w].path == path:
@@ -178,9 +228,25 @@ class FlipbookPlayer(QObject):
         self.frame.emit(p, self.pix[p.path])
         self._show_status()
 
+    def counter(self) -> tuple[int, int]:
+        """(the shown frame's number, how many frames play): unreadable frames, and with Skip Odd Sizes frames of
+        another size, aren't counted. Frames whose size isn't known yet count as playing."""
+        if self._ranks is None:
+            ref = self._reference_size() if self.same_size else None
+            ranks, r = [], 0
+            for p in self.frames:
+                if not self._skipped(p, ref):
+                    r += 1
+                ranks.append(r)
+            self._ranks = ranks
+        ranks = self._ranks
+        total = ranks[-1] if ranks else 0
+        return (max(1, ranks[self.index]) if 0 <= self.index < len(ranks) else 0), total
+
     def _show_status(self) -> None:
         if self.frames and self.index >= 0:
-            self.status.emit(f"Frame {self.index + 1:,} of {len(self.frames):,}")
+            shown, total = self.counter()
+            self.status.emit(f"Frame {shown:,} of {max(total, 1):,}")
 
     def _tick(self) -> None:
         n = len(self.frames)
@@ -267,6 +333,10 @@ class FlipbookBar(QWidget):
         self.edit_btn.setToolTip("Show this flipbook's frames as thumbnails: Delete removes, Ctrl+C and Ctrl+V "
                                  "copy and paste, right-click for more")
         row2.addWidget(self.edit_btn)
+        self.export_btn = QPushButton("Export…")
+        self.export_btn.setToolTip("Save these photos as an animated GIF or WebP file, as they play (order, speed, "
+                                   "loop and Skip Odd Sizes)")
+        row2.addWidget(self.export_btn)
         self.save_btn = QPushButton("Save Flipbook…")
         self.save_btn.setToolTip("Keep these photos, in this order, with the speed and options, under Flipbooks")
         row2.addWidget(self.save_btn)

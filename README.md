@@ -51,6 +51,9 @@ not in a file. Keep it private: anyone with it can use your Mars Vista quota.
 4. Optionally click **Preview** for an estimate.
 5. Click **Start**. If Start is greyed out, the line beside it says what's missing.
 
+Each card can be folded with its *Hide* link, and **dragged by its title** to another place in its column (Activity
+above Progress, for example). The order is kept; *View > Reset View Options* puts it back.
+
 ### Rovers and cameras
 
 <img align="right" width="300" src=".github/readme/rovers.png" alt="The Rovers card, with Perseverance's cameras open and three of them unticked">
@@ -138,7 +141,7 @@ The **Photos** tab (or *Ctrl+2*) browses the photo folder without a file manager
   *Start*. While a download or look-up runs, its *Pause Download* and *Stop* buttons stay there too, next to what
   it's doing.
 
-![A photo at full size, with Previous, Next, Fit, Actual Size and Favorite above it, and the flipbook bar below it: Play, Speed, Loop, Skip Odd Sizes, Reverse and Save Flipbook](.github/readme/photo_full.png)
+![A photo at full size, with Previous, Next, Fit, Actual Size and Favorite above it, and the flipbook bar below it: Play, Speed, Loop, Skip Odd Sizes, Reverse, Export and Save Flipbook](.github/readme/photo_full.png)
 
 **When and where each photo was taken** is looked up online the first time you open a sol, for all its photos at
 once, and kept in the app data folder, so it shows instantly after that (also offline). It shows the time taken
@@ -199,6 +202,11 @@ Photos taken a moment apart play like a film: a landing, the arm moving, the sky
 3. **Save Flipbook…** keeps exactly those photos, in that order, with the speed and options, in the *Flipbooks*
    tab. You can also right-click selected photos and pick *Add to Flipbook > New Flipbook…*, or a saved flipbook
    to add them to its end.
+4. **Export…** saves what Play plays as an **animated GIF** (plays almost everywhere, 256 colors per frame) or an
+   **animated WebP** (full color, smaller, plays in web browsers), with its order, speed, loop and *Skip Odd
+   Sizes*, at 480, 720 or 1080 pixels or the photos' own size. *Cancel* leaves no half-written file.
+
+   <img src=".github/readme/flipbook_export.png" width="440" alt="The Export Flipbook window for the flipbook Mastcam-Z rocks: Format GIF, Size 720 px, Speed 6 photos/s with Loop on, 15 frames, 720 × 524 pixels, and Export… and Close">
 
 **Editing a saved flipbook:** choose it in the *Flipbooks* tab (it plays), then click **Edit Frames** to see its
 frames as thumbnails, in order. **Delete** takes frames out (the photos themselves are never deleted), **Ctrl+C**
@@ -272,7 +280,8 @@ folder picker instead of the system's, because the system's can't be see-through
 *Reset Settings to Defaults* resets rovers, cameras, the sol range, parallel downloads, the download limit and
 the retry option. The photo folder, the API key, the app data folder, scan results and request counts are kept.
 View options have their own reset: *Reset View Options* puts units, speed averaging, the theme, the activity log,
-folded cards, window opacity, the thumbnail size and the order of the sols list back to their defaults. Favorites
+folded cards, the order of the cards, window opacity, the thumbnail size and the order of the sols list back to
+their defaults. Favorites
 and flipbooks are never reset.
 
 </details>
@@ -465,9 +474,9 @@ each [release](https://github.com/cincottash/RoverImageScraper/releases). Each c
 Python and the libraries it needs, so it runs without Python and downloads nothing to start. The standalone app is
 the desktop app only; the command line runs from the source code.
 
-- **Windows: `RoverImageScraper.exe`** (about 40 MB). Each time it starts it unpacks itself into Windows'
+- **Windows: `RoverImageScraper.exe`** (about 45 MB). Each time it starts it unpacks itself into Windows'
   temporary folder (about 90 MB); that copy is removed when it closes.
-- **Linux: `RoverImageScraper-x86_64.AppImage`** (an [AppImage](https://appimage.org), about 65 MB). Runs on
+- **Linux: `RoverImageScraper-x86_64.AppImage`** (an [AppImage](https://appimage.org), about 70 MB). Runs on
   64-bit Intel/AMD Linux from about 2022 on: Ubuntu 22.04 or newer, Debian 12, Fedora 36 and similar. If it says
   FUSE is missing, install it (`sudo apt install libfuse2` on Ubuntu/Debian) or run it with
   `--appimage-extract-and-run`. The API key is kept in your desktop's keyring (GNOME Keyring or KWallet); without
@@ -522,6 +531,7 @@ All program code is in `rover_scraper/`:
 - `photo_page.py`: the Photos page. `photo_library.py`: finds the photos in the folder.
   `photo_details.py`: looks up when and where photos were taken, and keeps the details.
   `favorites.py`: favorites and saved flipbooks. `flipbook.py`: the flipbook player and its controls.
+  `flipbook_export.py`: saving a flipbook as an animated GIF or WebP file.
 - `slow_moments.py`: notes the moments the window stops responding, and what it was doing.
 - `state.py`: the app data folder, and the photos NASA won't serve. `settings.py`: the app's saved settings.
 - `check.svg` and `check_dark.svg`: the tick drawn in checkboxes (white, or dark on light accent colors).
