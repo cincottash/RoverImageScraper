@@ -961,6 +961,10 @@ class CardMover(QObject):
             y = after.geometry().top() - 6
         else:
             y = before.geometry().bottom() + 6
+        # Kept inside the column: its first card starts at the very top (and Activity may reach the bottom), so a
+        # line above the first card or below the last one was drawn outside it, out of sight.
+        height = self.columns[column][1].height()
+        y = min(max(y, 1), height - 2)
         self.line.setGeometry(ref.geometry().left(), y - 1, ref.geometry().width(), 3)
         self.line.show()
         self.line.raise_()
